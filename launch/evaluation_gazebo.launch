@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 评估器参数 -->
+    <arg name="config_file" default="$(find evaluation)/config/eval_config.yaml"/>
+    <arg name="output_dir" default="$(find evaluation)/results"/>
+    <arg name="rviz" default="false"/>  <!-- 默认关闭RViz,避免与其他系统冲突 -->
+    
+    <!-- 加载配置 -->
+    <rosparam command="load" file="$(arg config_file)" ns="multi_algorithm_evaluator"/>
+    
+    <!-- 覆盖输出目录 -->
+    <param name="multi_algorithm_evaluator/output_dir" value="$(arg output_dir)"/>
+    
+    <!-- 多算法评估节点 -->
+    <node name="multi_algorithm_evaluator" 
+          pkg="evaluation" 
+          type="multi_algo_evaluator.py" 
+          output="screen">
+    </node>
+    
+    <!-- RViz可视化 (可选,默认关闭避免冲突) -->
+    <node name="rviz_evaluation" 
+          pkg="rviz" 
+          type="rviz" 
+          args="-d $(find evaluation)/rviz/evaluation.rviz"
+          if="$(arg rviz)"/>
+</launch>

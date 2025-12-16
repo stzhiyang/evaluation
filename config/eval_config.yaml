@@ -1,0 +1,31 @@
+# 评估器配置文件
+
+# 数据关联参数
+distance_threshold: 1.0      # 最大匹配距离(米)
+iou_threshold: 0.3           # 最小IoU阈值
+
+# 更新频率
+update_freq: 10.0            # 评估更新频率(Hz)
+
+# 输出目录
+output_dir: "results"        # 相对于evaluation包的路径
+
+# 话题配置
+ground_truth_topic: "/gazebo/model_states"
+mdetector_topic: "/m_detector/point_out"          # M-detector动态点云
+fapp_topic: "/dynamic_points"                     # FAPP动态点云
+lvdot_topic: "/onboard_detector/dynamic_point_cloud"  # LV-DOT动态点云
+algo4_topic: "/algo4/dynamic_points"              # 第四算法动态点云
+
+# 可视化开关
+enable_visualization: true
+
+# Gazebo动态物体过滤关键词
+dynamic_keywords: ["actor", "dynamic", "person", "obstacle", "sphere", "box"]
+
+# 默认边界框尺寸[长, 宽, 高] (米)
+default_bbox_size: [0.5, 0.5, 1.8]
+
+# M-detector DBSCAN聚类参数
+mdetector_dbscan_eps: 0.5
+mdetector_dbscan_min_samples: 10
