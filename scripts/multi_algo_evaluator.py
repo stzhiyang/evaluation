@@ -17,6 +17,7 @@ from geometry_msgs.msg import Point
 from std_msgs.msg import ColorRGBA
 import sys
 import os
+from datetime import datetime
 
 # 添加脚本目录到路径
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -50,7 +51,7 @@ class MultiAlgorithmEvaluator:
             'M-detector': MetricsCalculator(),
             'FAPP': MetricsCalculator(),
             'LV-DOT': MetricsCalculator(),
-            'Algorithm4': MetricsCalculator()
+            'LDOT': MetricsCalculator()
         }
         
         # 数据缓冲区
@@ -59,7 +60,7 @@ class MultiAlgorithmEvaluator:
             'M-detector': deque(maxlen=100),
             'FAPP': deque(maxlen=100),
             'LV-DOT': deque(maxlen=100),
-            'Algorithm4': deque(maxlen=100)
+            'LDOT': deque(maxlen=100)
         }
         
         # 时间戳和指标记录
@@ -67,7 +68,7 @@ class MultiAlgorithmEvaluator:
             'M-detector': {'timestamps': [], 'metrics': []},
             'FAPP': {'timestamps': [], 'metrics': []},
             'LV-DOT': {'timestamps': [], 'metrics': []},
-            'Algorithm4': {'timestamps': [], 'metrics': []}
+            'LDOT': {'timestamps': [], 'metrics': []}
         }
         
         # 当前真值
@@ -86,9 +87,13 @@ class MultiAlgorithmEvaluator:
         self.start_time = rospy.Time.now()
         
         rospy.loginfo("Multi-Algorithm Evaluator initialized")
-        rospy.loginfo(f"Algorithms: M-detector, FAPP, LV-DOT, Algorithm4")
+        rospy.loginfo(f"Algorithms: M-detector, FAPP, LV-DOT, LDOT")
         rospy.loginfo(f"Update frequency: {self.update_freq} Hz")
         rospy.loginfo(f"Results will be saved to: {self.output_dir}")
+        
+        # 打印评估控制信息
+        if self.max_frames > 0:
+            rospy.loginfo(f"Max evaluation frames: {self.max_frames}")
     
     def load_parameters(self):
         """加载参数"""
@@ -99,9 +104,18 @@ class MultiAlgorithmEvaluator:
         # 更新频率
         self.update_freq = rospy.get_param('~update_freq', 10.0)
         
-        # 输出目录
-        self.output_dir = rospy.get_param('~output_dir', 
+        # 评估控制参数 - 新增
+        self.max_frames = rospy.get_param('~max_frames', 0)  # 最大评估帧数，0表示无限制
+        self.frame_count = 0  # 当前已评估帧数
+        
+        # 输出目录 - 修改为自动创建带时间戳的子文件夹
+        base_output_dir = rospy.get_param('~output_dir', 
                                          os.path.join(os.path.dirname(__file__), '../results'))
+        
+        # 创建带时间戳的子文件夹
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        self.output_dir = os.path.join(base_output_dir, f'eval_{timestamp}')
+        
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
         
@@ -110,7 +124,7 @@ class MultiAlgorithmEvaluator:
         self.mdetector_topic = rospy.get_param('~mdetector_topic', '/dynamic_points')
         self.fapp_topic = rospy.get_param('~fapp_topic', '/states')
         self.lvdot_topic = rospy.get_param('~lvdot_topic', '/onboard_detector/dynamic_bboxes')
-        self.algo4_topic = rospy.get_param('~algo4_topic', '/algo4/detections')
+        self.ldot_topic = rospy.get_param('~ldot_topic', '/ldot_detector/dynamic_point_cloud')
         
         # 可视化开关
         self.enable_visualization = rospy.get_param('~enable_visualization', True)
@@ -139,9 +153,9 @@ class MultiAlgorithmEvaluator:
         self.lvdot_sub = rospy.Subscriber(self.lvdot_topic, PointCloud2, 
                                          self.lvdot_callback, queue_size=10)
         
-        # Algorithm4
-        self.algo4_sub = rospy.Subscriber(self.algo4_topic, PointCloud2, 
-                                         self.algo4_callback, queue_size=10)
+        # LDOT
+        self.ldot_sub = rospy.Subscriber(self.ldot_topic, PointCloud2, 
+                                         self.ldot_callback, queue_size=10)
     
     def setup_publishers(self):
         """设置发布器"""
@@ -151,10 +165,19 @@ class MultiAlgorithmEvaluator:
                 'M-detector': rospy.Publisher('/evaluation/mdetector_detections', MarkerArray, queue_size=10),
                 'FAPP': rospy.Publisher('/evaluation/fapp_detections', MarkerArray, queue_size=10),
                 'LV-DOT': rospy.Publisher('/evaluation/lvdot_detections', MarkerArray, queue_size=10),
-                'Algorithm4': rospy.Publisher('/evaluation/algo4_detections', MarkerArray, queue_size=10)
+                'LDOT': rospy.Publisher('/evaluation/ldot_detections', MarkerArray, queue_size=10)
             }
             self.match_line_pub = rospy.Publisher('/evaluation/match_lines', Marker, queue_size=10)
             self.metrics_text_pub = rospy.Publisher('/evaluation/metrics_text', MarkerArray, queue_size=10)
+    
+    def should_stop_evaluation(self):
+        """检查是否应该停止评估"""
+        # 检查帧数限制
+        if self.max_frames > 0 and self.frame_count >= self.max_frames:
+            rospy.loginfo(f"Reached max frames: {self.frame_count}/{self.max_frames}")
+            return True
+        
+        return False
     
     def gt_callback(self, msg):
         """Gazebo真值回调"""
@@ -207,20 +230,27 @@ class MultiAlgorithmEvaluator:
         detections = self.adapter.parse_mdetector(msg)  # 复用点云解析逻辑
         self.detection_buffers['LV-DOT'].append(detections)
     
-    def algo4_callback(self, msg):
-        """Algorithm4回调 - 统一使用点云解析"""
+    def ldot_callback(self, msg):
+        """LDOT回调 - 统一使用点云解析"""
         detections = self.adapter.parse_mdetector(msg)  # 复用点云解析逻辑
-        self.detection_buffers['Algorithm4'].append(detections)
+        self.detection_buffers['LDOT'].append(detections)
     
     def evaluate_callback(self, event):
         """评估定时回调"""
         if len(self.current_gt) == 0:
             return
         
+        # 检查是否达到评估限制
+        if self.should_stop_evaluation():
+            rospy.loginfo("Evaluation limit reached. Stopping...")
+            self.save_results()
+            rospy.signal_shutdown("Evaluation completed")
+            return
+        
         current_time = rospy.Time.now().to_sec()
         
         # 评估每个算法
-        for algo_name in ['M-detector', 'FAPP', 'LV-DOT', 'Algorithm4']:
+        for algo_name in ['M-detector', 'FAPP', 'LV-DOT', 'LDOT']:
             if len(self.detection_buffers[algo_name]) == 0:
                 continue
             
@@ -244,6 +274,9 @@ class MultiAlgorithmEvaluator:
             # 可视化
             if self.enable_visualization:
                 self.visualize_detections(algo_name, detections, matches)
+        
+        # 增加帧计数
+        self.frame_count += 1
         
         # 可视化真值
         if self.enable_visualization:
@@ -287,12 +320,12 @@ class MultiAlgorithmEvaluator:
         """可视化检测结果"""
         marker_array = MarkerArray()
         
-        # 颜色映射
+        # 颜色映射 - 高对比度颜色，更容易区分
         colors = {
-            'M-detector': (0.9, 0.3, 0.3, 0.6),  # 红色
-            'FAPP': (0.2, 0.6, 0.9, 0.6),        # 蓝色
-            'LV-DOT': (0.2, 0.8, 0.4, 0.6),      # 绿色
-            'Algorithm4': (0.95, 0.6, 0.1, 0.6)  # 橙色
+            'M-detector': (1.0, 0.0, 0.0, 0.7),  # 纯红色
+            'FAPP': (0.0, 0.5, 1.0, 0.7),        # 亮蓝色
+            'LV-DOT': (1.0, 1.0, 0.0, 0.7),      # 黄色
+            'LDOT': (0.5, 0.0, 1.0, 0.7)         # 深紫色
         }
         
         color = colors.get(algo_name, (0.5, 0.5, 0.5, 0.6))
@@ -328,47 +361,61 @@ class MultiAlgorithmEvaluator:
             self.det_marker_pubs[algo_name].publish(marker_array)
     
     def visualize_metrics(self):
-        """可视化实时指标"""
+        """可视化实时指标 - 横向并排显示"""
         marker_array = MarkerArray()
         
-        y_offset = 0.0
-        for algo_name in ['M-detector', 'FAPP', 'LV-DOT', 'Algorithm4']:
+        # 算法颜色映射（与检测框颜色一致）
+        algo_colors = {
+            'M-detector': (1.0, 0.0, 0.0),  # 红色
+            'FAPP': (0.0, 0.5, 1.0),        # 蓝色
+            'LV-DOT': (1.0, 1.0, 0.0),      # 黄色
+            'LDOT': (0.5, 0.0, 1.0)         # 深紫色
+        }
+        
+        # 横向排列，x方向偏移
+        x_offset = -6.0  # 起始x位置
+        x_spacing = 4.0  # 每个算法之间的间距
+        
+        for i, algo_name in enumerate(['M-detector', 'FAPP', 'LV-DOT', 'LDOT']):
             if len(self.algo_metrics_dict[algo_name]['metrics']) == 0:
                 continue
             
             latest_metrics = self.algo_metrics_dict[algo_name]['metrics'][-1]
+            color = algo_colors.get(algo_name, (1.0, 1.0, 1.0))
             
-            text = f"{algo_name}:\n"
-            text += f"Recall: {latest_metrics['recall']:.3f}\n"
-            text += f"Precision: {latest_metrics['precision']:.3f}\n"
-            text += f"F1: {latest_metrics['f1']:.3f}\n"
-            text += f"MOTP: {latest_metrics['motp']:.3f}m"
+            # 算法名称和指标文本
+            text = f"{algo_name}\n"
+            text += f"R:{latest_metrics['recall']:.2f} "
+            text += f"P:{latest_metrics['precision']:.2f}\n"
+            text += f"F1:{latest_metrics['f1']:.2f} "
+            text += f"MOTP:{latest_metrics['motp']:.2f}m"
             
             marker = Marker()
             marker.header.frame_id = "world"
             marker.header.stamp = rospy.Time.now()
             marker.ns = "metrics_text"
-            marker.id = len(marker_array.markers)
+            marker.id = i
             marker.type = Marker.TEXT_VIEW_FACING
             marker.action = Marker.ADD
             
-            marker.pose.position.x = 0.0
+            # 横向排列位置
+            marker.pose.position.x = x_offset + i * x_spacing
             marker.pose.position.y = 0.0
-            marker.pose.position.z = 3.0 + y_offset
+            marker.pose.position.z = 4.0  # 固定高度
             marker.pose.orientation.w = 1.0
             
-            marker.scale.z = 0.3
+            marker.scale.z = 0.4  # 稍大的字体
             
-            marker.color.r = 1.0
-            marker.color.g = 1.0
-            marker.color.b = 1.0
+            # 使用算法对应的颜色
+            marker.color.r = color[0]
+            marker.color.g = color[1]
+            marker.color.b = color[2]
             marker.color.a = 1.0
             
             marker.text = text
             marker.lifetime = rospy.Duration(0.5)
             
             marker_array.markers.append(marker)
-            y_offset += 1.5
         
         self.metrics_text_pub.publish(marker_array)
     
@@ -417,7 +464,7 @@ class MultiAlgorithmEvaluator:
             writer = csv.writer(f)
             writer.writerow(['Timestamp', 'Algorithm', 'TP', 'FP', 'FN', 'Recall', 'Precision', 'F1', 'MOTP'])
             
-            for algo_name in ['M-detector', 'FAPP', 'LV-DOT', 'Algorithm4']:
+            for algo_name in ['M-detector', 'FAPP', 'LV-DOT', 'LDOT']:
                 timestamps = self.algo_metrics_dict[algo_name]['timestamps']
                 metrics_list = self.algo_metrics_dict[algo_name]['metrics']
                 
@@ -438,13 +485,18 @@ class MultiAlgorithmEvaluator:
         """保存总体指标到JSON"""
         json_path = os.path.join(self.output_dir, 'summary.json')
         
+        elapsed_time = (rospy.Time.now() - self.start_time).to_sec()
+        
         summary = {
             'evaluation_time': rospy.Time.now().to_sec(),
-            'duration': (rospy.Time.now() - self.start_time).to_sec(),
+            'start_time': self.start_time.to_sec(),
+            'duration': elapsed_time,
+            'total_frames': self.frame_count,
             'parameters': {
                 'distance_threshold': self.distance_threshold,
                 'iou_threshold': self.iou_threshold,
-                'update_freq': self.update_freq
+                'update_freq': self.update_freq,
+                'max_frames': self.max_frames
             },
             'algorithms': overall_metrics
         }
@@ -454,9 +506,15 @@ class MultiAlgorithmEvaluator:
     
     def print_summary(self, overall_metrics):
         """打印评估总结"""
+        elapsed_time = (rospy.Time.now() - self.start_time).to_sec()
+        
         rospy.loginfo("\n" + "="*80)
         rospy.loginfo("EVALUATION SUMMARY")
         rospy.loginfo("="*80)
+        rospy.loginfo(f"\nEvaluation Statistics:")
+        rospy.loginfo(f"  Total Frames:  {self.frame_count}")
+        rospy.loginfo(f"  Duration:      {elapsed_time:.2f} seconds")
+        rospy.loginfo(f"  Output Dir:    {self.output_dir}")
         
         for algo_name, metrics in overall_metrics.items():
             rospy.loginfo(f"\n{algo_name}:")

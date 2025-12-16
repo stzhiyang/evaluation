@@ -28,19 +28,19 @@ class PlotGenerator:
         # 配置matplotlib
         self._setup_matplotlib()
         
-        # 算法颜色映射
+        # 算法颜色映射 - 高对比度颜色
         self.algo_colors = {
-            'M-detector': '#E74C3C',  # 红色
-            'FAPP': '#3498DB',        # 蓝色
-            'LV-DOT': '#2ECC71',      # 绿色
-            'Algorithm4': '#F39C12'   # 橙色
+            'M-detector': '#FF0000',  # 纯红色
+            'FAPP': '#0080FF',        # 亮蓝色
+            'LV-DOT': '#FFD700',      # 金黄色
+            'LDOT': '#8000FF'         # 深紫色
         }
         
         self.algo_markers = {
             'M-detector': 'o',
             'FAPP': 's',
             'LV-DOT': '^',
-            'Algorithm4': 'd'
+            'LDOT': 'd'
         }
     
     def _setup_matplotlib(self):
@@ -58,9 +58,29 @@ class PlotGenerator:
         plt.rcParams['legend.fontsize'] = 10
         plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
     
+    def _moving_average(self, values, window_size=5):
+        """
+        计算滑动平均
+        Args:
+            values: 原始数据
+            window_size: 窗口大小
+        Returns:
+            平滑后的数据
+        """
+        if len(values) < window_size:
+            return values
+        
+        # 使用numpy的卷积计算滑动平均
+        weights = np.ones(window_size) / window_size
+        smoothed = np.convolve(values, weights, mode='valid')
+        
+        # 为了保持长度一致，在开头填充原始值
+        padding = values[:window_size-1]
+        return np.concatenate([padding, smoothed])
+    
     def plot_time_series(self, algo_metrics_dict, save_path=None):
         """
-        绘制时序对比曲线图
+        绘制时序对比曲线图 - 2x2网格布局 + 滑动平均线
         Args:
             algo_metrics_dict: {
                 'M-detector': {'timestamps': [...], 'metrics': [...]},
@@ -72,14 +92,20 @@ class PlotGenerator:
         if save_path is None:
             save_path = os.path.join(self.output_dir, 'time_series.png')
         
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-        fig.suptitle('Multi-Algorithm Performance Comparison Over Time', fontsize=16, fontweight='bold')
+        # 创建2x2网格布局
+        fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+        fig.suptitle('Multi-Algorithm Performance Over Time', fontsize=18, fontweight='bold', y=0.98)
         
         metric_names = ['recall', 'precision', 'f1', 'motp']
-        metric_titles = ['Recall', 'Precision', 'F1-Score', 'MOTP (m)']
+        metric_titles = ['Recall', 'Precision', 'F1-Score', 'MOTP (Localization Error)']
+        y_labels = ['Recall', 'Precision', 'F1-Score', 'MOTP (m)']
         
-        for idx, (metric, title) in enumerate(zip(metric_names, metric_titles)):
-            ax = axes[idx // 2, idx % 2]
+        # 2x2布局的位置映射
+        positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        
+        for idx, (metric, title, ylabel) in enumerate(zip(metric_names, metric_titles, y_labels)):
+            row, col = positions[idx]
+            ax = axes[row, col]
             
             for algo_name, data in algo_metrics_dict.items():
                 if len(data['timestamps']) == 0:
@@ -90,28 +116,59 @@ class PlotGenerator:
                 if len(timestamps) > 0:
                     timestamps = timestamps - timestamps[0]
                 
-                values = [m[metric] for m in data['metrics']]
+                values = np.array([m[metric] for m in data['metrics']])
                 
-                # 绘制曲线
+                # 计算滑动平均（窗口大小根据数据点数量自适应）
+                window_size = max(3, min(7, len(values) // 10))
+                smoothed_values = self._moving_average(values, window_size)
+                
+                color = self.algo_colors.get(algo_name, '#95A5A6')
+                marker = self.algo_markers.get(algo_name, 'x')
+                
+                # 绘制原始数据点（半透明，小标记）
                 ax.plot(timestamps, values, 
-                       label=algo_name,
-                       color=self.algo_colors.get(algo_name, '#95A5A6'),
-                       marker=self.algo_markers.get(algo_name, 'x'),
+                       color=color,
+                       marker=marker,
                        markevery=max(1, len(timestamps)//20),
-                       linewidth=2,
-                       alpha=0.8)
+                       markersize=4,
+                       linewidth=1,
+                       alpha=0.3,
+                       linestyle=':')
+                
+                # 绘制滑动平均线（实线，粗线条）
+                ax.plot(timestamps, smoothed_values, 
+                       label=algo_name,
+                       color=color,
+                       linewidth=2.5,
+                       alpha=0.95)
             
-            ax.set_xlabel('Time (s)', fontsize=11)
-            ax.set_ylabel(title, fontsize=11)
-            ax.set_title(f'{title} vs Time', fontsize=12, fontweight='bold')
-            ax.legend(loc='best')
-            ax.grid(True, alpha=0.3)
+            # 设置标签和标题
+            ax.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
+            ax.set_ylabel(ylabel, fontsize=12, fontweight='bold')
+            ax.set_title(title, fontsize=13, fontweight='bold', pad=8)
             
-            # 为MOTP设置合适的y轴范围
+            # 图例 - 只在右上角子图显示
+            if idx == 1:
+                ax.legend(loc='upper right', fontsize=10, framealpha=0.95, 
+                         ncol=2, borderaxespad=0.5)
+            
+            # 网格样式
+            ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.7)
+            ax.set_axisbelow(True)
+            
+            # Y轴范围优化
             if metric == 'motp':
                 ax.set_ylim(bottom=0)
+            else:
+                ax.set_ylim(0, 1.05)  # Recall/Precision/F1 范围 0-1
+            
+            # 添加参考线
+            if metric != 'motp':
+                ax.axhline(y=0.8, color='gray', linestyle=':', linewidth=1.2, alpha=0.6)
+                ax.text(0.02, 0.82, '0.8', transform=ax.get_yaxis_transform(),
+                       fontsize=9, color='gray', alpha=0.8, fontweight='bold')
         
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.savefig(save_path.replace('.png', '.pdf'), dpi=300, bbox_inches='tight')
         plt.close()

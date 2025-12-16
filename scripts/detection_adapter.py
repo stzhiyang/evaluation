@@ -38,8 +38,16 @@ class DetectionAdapter:
     
     def __init__(self):
         # M-detector DBSCAN聚类参数
-        self.dbscan_eps = rospy.get_param('~mdetector_dbscan_eps', 0.5)
-        self.dbscan_min_samples = rospy.get_param('~mdetector_dbscan_min_samples', 10)
+        self.dbscan_eps = rospy.get_param('~mdetector_dbscan_eps', 0.8)
+        self.dbscan_min_samples = rospy.get_param('~mdetector_dbscan_min_samples', 5)
+        
+        # 最小边界框尺寸 - 防止点云稀疏导致box过小
+        default_size = rospy.get_param('~default_bbox_size', [0.5, 0.5, 1.8])
+        self.min_bbox_size = np.array(default_size)
+        
+        rospy.loginfo(f"DetectionAdapter initialized")
+        rospy.loginfo(f"  DBSCAN eps: {self.dbscan_eps}, min_samples: {self.dbscan_min_samples}")
+        rospy.loginfo(f"  Min bbox size: {self.min_bbox_size}")
         
     def parse_mdetector(self, pointcloud_msg):
         """
@@ -79,12 +87,19 @@ class DetectionAdapter:
         for label in unique_labels:
             cluster_points = points[labels == label]
             
-            # 计算边界框
+            # 使用质心作为物体中心位置
+            # 质心 = 点云的均值，相比几何中心（AABB中心）更能反映点云的实际分布
+            # 注意：由于雷达只能看到物体的一面，质心仍会偏向物体表面
+            # 但相比几何中心，质心受点云密度影响，通常更接近真实中心
+            center = np.mean(cluster_points, axis=0)
+            
+            # 计算边界框尺寸
             min_bound = np.min(cluster_points, axis=0)
             max_bound = np.max(cluster_points, axis=0)
-            
-            center = (min_bound + max_bound) / 2.0
             size = max_bound - min_bound
+            
+            # 应用最小边界框尺寸限制 - 点云通常只覆盖物体一面，需要扩展到合理尺寸
+            size = np.maximum(size, self.min_bbox_size)
             
             # M-detector不提供速度信息
             velocity = np.array([0.0, 0.0, 0.0])

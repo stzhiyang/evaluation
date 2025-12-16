@@ -1,31 +1,41 @@
 # 评估器配置文件
 
 # 数据关联参数
-distance_threshold: 1.0      # 最大匹配距离(米)
-iou_threshold: 0.3           # 最小IoU阈值
+distance_threshold: 2.0      # 最大匹配距离(米) - 放宽以容忍聚类中心偏差
+iou_threshold: 0.1           # 最小IoU阈值 - 放宽以提高匹配率
 
 # 更新频率
 update_freq: 10.0            # 评估更新频率(Hz)
 
+# 评估控制参数（用于多次实验对比）
+max_frames: 500              # 最大评估帧数，0表示无限制
+                             # 每次实验使用相同帧数，确保对比公平
+
 # 输出目录
 output_dir: "results"        # 相对于evaluation包的路径
+                             # 每次运行会自动创建带时间戳的子文件夹，如：results/eval_20231216_143025/
 
 # 话题配置
 ground_truth_topic: "/gazebo/model_states"
-mdetector_topic: "/m_detector/point_out"          # M-detector动态点云
+mdetector_topic: "/m_detector/frame_out"          # M-detector动态点云
 fapp_topic: "/dynamic_points"                     # FAPP动态点云
 lvdot_topic: "/onboard_detector/dynamic_point_cloud"  # LV-DOT动态点云
-algo4_topic: "/algo4/dynamic_points"              # 第四算法动态点云
+ldot_topic: "/ldot_detector/dynamic_point_cloud"              # 第四算法动态点云
 
 # 可视化开关
 enable_visualization: true
 
-# Gazebo动态物体过滤关键词
-dynamic_keywords: ["actor", "dynamic", "person", "obstacle", "sphere", "box"]
+# Gazebo动态物体过滤关键词"actor", "dynamic", "obstacle", "sphere", "box"
+dynamic_keywords: ["person"]
 
 # 默认边界框尺寸[长, 宽, 高] (米)
 default_bbox_size: [0.5, 0.5, 1.8]
 
-# M-detector DBSCAN聚类参数
-mdetector_dbscan_eps: 0.5
-mdetector_dbscan_min_samples: 10
+# 评估系统 DBSCAN 聚类参数（用于所有点云格式的算法）
+# 注意：M-detector 使用体素聚类(0.25m)，输出点云已经过聚类，点云较稀疏
+# 其他算法(LDOT/LV-DOT/FAPP)使用 DBSCAN，参数为 eps=0.2-0.4m, min_points=3-10
+# 评估系统需要统一重新聚类，参数需要兼容不同算法的输出特性
+
+mdetector_dbscan_eps: 0.5    # 聚类半径（米）
+mdetector_dbscan_min_samples: 5  # 最小点数
+                          
