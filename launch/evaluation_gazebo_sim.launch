@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <launch>
     <!-- 评估器参数 -->
-    <arg name="config_file" default="$(find evaluation)/config/eval_config.yaml"/>
+    <arg name="config_file" default="$(find evaluation)/config/eval_config_sim.yaml"/>
     <arg name="output_dir" default="$(find evaluation)/results"/>
     <arg name="rviz" default="true"/>  <!-- 默认关闭RViz,避免与其他系统冲突 -->
     

@@ -94,7 +94,7 @@ class PlotGenerator:
         
         # 创建2x2网格布局
         fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-        fig.suptitle('Multi-Algorithm Performance Over Time', fontsize=18, fontweight='bold', y=0.98)
+        fig.suptitle('Multi-Algorithm Performance Over Time', fontsize=18, fontweight='bold', y=0.995)
         
         metric_names = ['recall', 'precision', 'f1', 'motp']
         metric_titles = ['Recall', 'Precision', 'F1-Score', 'MOTP (Localization Error)']
@@ -232,7 +232,7 @@ class PlotGenerator:
         ax.grid(True, linestyle='--', alpha=0.5)
         
         plt.title('Multi-Algorithm Performance Radar Chart', 
-                 size=16, fontweight='bold', pad=20)
+                 size=16, fontweight='bold', pad=5)
         plt.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
         
         plt.tight_layout()
@@ -298,7 +298,7 @@ class PlotGenerator:
                 table[(i+1, j)].set_alpha(0.3)
         
         plt.title('Multi-Algorithm Performance Summary', 
-                 fontsize=16, fontweight='bold', pad=20)
+                 fontsize=16, fontweight='bold', pad=5)
         
         plt.savefig(save_path.replace('.txt', '.png'), dpi=300, bbox_inches='tight')
         plt.savefig(save_path.replace('.txt', '.pdf'), dpi=300, bbox_inches='tight')

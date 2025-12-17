@@ -1,0 +1,6 @@
+# 评估系统生成的结果文件
+results/
+
+# Python 缓存文件
+__pycache__/
+*.pyc
