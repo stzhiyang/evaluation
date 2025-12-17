@@ -13,14 +13,12 @@ from scipy.spatial.distance import cdist
 class DataAssociator:
     """数据关联器"""
     
-    def __init__(self, distance_threshold=2.0, iou_threshold=0.1):
+    def __init__(self, distance_threshold=2.0):
         """
         Args:
             distance_threshold: 最大匹配距离(米)
-            iou_threshold: 最小IoU阈值
         """
         self.distance_threshold = distance_threshold
-        self.iou_threshold = iou_threshold
     
     def associate(self, ground_truth_list, detection_list):
         """
@@ -75,68 +73,30 @@ class DataAssociator:
     def _build_cost_matrix(self, ground_truth_list, detection_list):
         """
         构建代价矩阵
-        代价 = w1 * distance + w2 * (1 - IoU)
+        只使用距离作为匹配条件，因为不同算法的点云密度差异导致边界框大小不同
+        IoU 对边界框尺寸过于敏感，不适合作为匹配条件
         """
         n_gt = len(ground_truth_list)
         n_det = len(detection_list)
         cost_matrix = np.zeros((n_gt, n_det))
-        
-        w_distance = 0.7
-        w_iou = 0.3
         
         for i, gt in enumerate(ground_truth_list):
             for j, det in enumerate(detection_list):
                 # 计算欧氏距离
                 distance = self._compute_distance(gt, det)
                 
-                # 计算3D IoU
-                iou = self._compute_3d_iou(gt, det)
-                
-                # 如果距离太远或IoU太小,设置为无穷大
-                if distance > self.distance_threshold or iou < self.iou_threshold:
+                # 只使用距离作为匹配条件
+                if distance > self.distance_threshold:
                     cost_matrix[i, j] = 1e6
                 else:
-                    cost_matrix[i, j] = w_distance * distance + w_iou * (1.0 - iou)
+                    # 代价就是距离本身
+                    cost_matrix[i, j] = distance
         
         return cost_matrix
     
     def _compute_distance(self, obj1, obj2):
         """计算两个物体中心的欧氏距离"""
         return np.linalg.norm(obj1.position - obj2.position)
-    
-    def _compute_3d_iou(self, obj1, obj2):
-        """
-        计算3D边界框IoU
-        假设边界框与坐标轴对齐(AABB)
-        """
-        # 边界框的最小和最大坐标
-        min1 = obj1.position - obj1.bbox_size / 2.0
-        max1 = obj1.position + obj1.bbox_size / 2.0
-        
-        min2 = obj2.position - obj2.bbox_size / 2.0
-        max2 = obj2.position + obj2.bbox_size / 2.0
-        
-        # 计算交集
-        inter_min = np.maximum(min1, min2)
-        inter_max = np.minimum(max1, max2)
-        
-        # 检查是否有交集
-        if np.any(inter_min >= inter_max):
-            return 0.0
-        
-        inter_volume = np.prod(inter_max - inter_min)
-        
-        # 计算并集
-        volume1 = np.prod(obj1.bbox_size)
-        volume2 = np.prod(obj2.bbox_size)
-        union_volume = volume1 + volume2 - inter_volume
-        
-        # 避免除零
-        if union_volume < 1e-6:
-            return 0.0
-        
-        iou = inter_volume / union_volume
-        return iou
 
 
 class MetricsCalculator:

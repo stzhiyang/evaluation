@@ -1,8 +1,7 @@
 # 评估器配置文件
 
 # 数据关联参数
-distance_threshold: 1.0      # 最大匹配距离(米) - 放宽以容忍聚类中心偏差
-iou_threshold: 0.1           # 最小IoU阈值 - 放宽以提高匹配率
+distance_threshold: 0.5      # 最大匹配距离(米) - 只使用距离判断
 
 # 更新频率
 update_freq: 10.0            # 评估更新频率(Hz)
@@ -38,4 +37,18 @@ default_bbox_size: [0.5, 0.5, 1.8]
 
 mdetector_dbscan_eps: 0.5    # 聚类半径（米）
 mdetector_dbscan_min_samples: 10  # 最小点数
+
+# 质心补偿配置
+# 由于激光雷达只能看到物体的一面，点云质心会偏向传感器方向
+# 需要根据传感器位置进行补偿，估算物体的真实几何中心
+enable_centroid_compensation: true  # true=启用补偿, false=直接使用质心
+
+# 里程计话题（用于获取机器人位置）
+odom_topic: "/Odometry"
+
+# 激光雷达外参：激光雷达相对于机体坐标系的位置和姿态
+# [x, y, z, roll, pitch, yaw]
+# x, y, z: 激光雷达相对于机体中心的平移（米）
+# roll, pitch, yaw: 激光雷达相对于机体的旋转（弧度）
+lidar_extrinsics: [-0.005, 0.0, 0.06, 0.0, 0.0, 0.0]
                           

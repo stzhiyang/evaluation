@@ -42,8 +42,7 @@ class MultiAlgorithmEvaluator:
         # 初始化模块
         self.adapter = DetectionAdapter()
         self.associator = DataAssociator(
-            distance_threshold=self.distance_threshold,
-            iou_threshold=self.iou_threshold
+            distance_threshold=self.distance_threshold
         )
         
         # 为每个算法创建计算器
@@ -97,9 +96,8 @@ class MultiAlgorithmEvaluator:
     
     def load_parameters(self):
         """加载参数"""
-        # 匹配阈值
+        # 匹配阈值（只使用距离）
         self.distance_threshold = rospy.get_param('~distance_threshold', 2.0)
-        self.iou_threshold = rospy.get_param('~iou_threshold', 0.1)
         
         # 更新频率
         self.update_freq = rospy.get_param('~update_freq', 10.0)
@@ -296,9 +294,11 @@ class MultiAlgorithmEvaluator:
             marker.type = Marker.CUBE
             marker.action = Marker.ADD
             
+            # RViz 的 CUBE marker 位置是中心点
+            # Gazebo 的 position.z 是底部位置，需要向上偏移半个高度
             marker.pose.position.x = detection.position[0]
             marker.pose.position.y = detection.position[1]
-            marker.pose.position.z = detection.position[2]
+            marker.pose.position.z = detection.position[2] + detection.bbox_size[2] / 2.0
             marker.pose.orientation.w = 1.0
             
             marker.scale.x = detection.bbox_size[0]
