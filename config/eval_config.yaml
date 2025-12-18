@@ -19,10 +19,7 @@ ground_truth_topic: "/gazebo/model_states"
 mdetector_topic: "/m_detector/point_out"          # M-detector动态点云
 fapp_topic: "/dynamic_points"                     # FAPP动态点云
 lvdot_topic: "/onboard_detector/dynamic_point_cloud"  # LV-DOT动态点云
-ldot_topic: "/ldot_detector/dynamic_point_cloud"              # 第四算法动态点云
-
-# 可视化开关
-enable_visualization: true
+ldot_topic: "/ldot_detector/dynamic_point_cloud"              # ldot动态点云
 
 # Gazebo动态物体过滤关键词"actor", "dynamic", "obstacle", "sphere", "box"
 dynamic_keywords: ["person"]

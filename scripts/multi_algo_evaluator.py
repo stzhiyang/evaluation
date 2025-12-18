@@ -110,9 +110,9 @@ class MultiAlgorithmEvaluator:
         base_output_dir = rospy.get_param('~output_dir', 
                                          os.path.join(os.path.dirname(__file__), '../results'))
         
-        # 创建带时间戳的子文件夹
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.output_dir = os.path.join(base_output_dir, f'eval_{timestamp}')
+        # 创建带时间戳的子文件夹和文件名前缀
+        self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        self.output_dir = os.path.join(base_output_dir, f'eval_{self.timestamp}')
         
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -123,9 +123,6 @@ class MultiAlgorithmEvaluator:
         self.fapp_topic = rospy.get_param('~fapp_topic', '/states')
         self.lvdot_topic = rospy.get_param('~lvdot_topic', '/onboard_detector/dynamic_bboxes')
         self.ldot_topic = rospy.get_param('~ldot_topic', '/ldot_detector/dynamic_point_cloud')
-        
-        # 可视化开关
-        self.enable_visualization = rospy.get_param('~enable_visualization', True)
         
         # Gazebo动态物体过滤关键词
         self.dynamic_keywords = rospy.get_param('~dynamic_keywords', ['actor', 'dynamic', 'person', 'obstacle'])
@@ -156,17 +153,16 @@ class MultiAlgorithmEvaluator:
                                          self.ldot_callback, queue_size=10)
     
     def setup_publishers(self):
-        """设置发布器"""
-        if self.enable_visualization:
-            self.gt_marker_pub = rospy.Publisher('/evaluation/ground_truth', MarkerArray, queue_size=10)
-            self.det_marker_pubs = {
-                'M-detector': rospy.Publisher('/evaluation/mdetector_detections', MarkerArray, queue_size=10),
-                'FAPP': rospy.Publisher('/evaluation/fapp_detections', MarkerArray, queue_size=10),
-                'LV-DOT': rospy.Publisher('/evaluation/lvdot_detections', MarkerArray, queue_size=10),
-                'LDOT': rospy.Publisher('/evaluation/ldot_detections', MarkerArray, queue_size=10)
-            }
-            self.match_line_pub = rospy.Publisher('/evaluation/match_lines', Marker, queue_size=10)
-            self.metrics_text_pub = rospy.Publisher('/evaluation/metrics_text', MarkerArray, queue_size=10)
+        """设置发布器 - 始终发布可视化话题，由 launch 文件控制是否启动 RViz"""
+        self.gt_marker_pub = rospy.Publisher('/evaluation/ground_truth', MarkerArray, queue_size=10)
+        self.det_marker_pubs = {
+            'M-detector': rospy.Publisher('/evaluation/mdetector_detections', MarkerArray, queue_size=10),
+            'FAPP': rospy.Publisher('/evaluation/fapp_detections', MarkerArray, queue_size=10),
+            'LV-DOT': rospy.Publisher('/evaluation/lvdot_detections', MarkerArray, queue_size=10),
+            'LDOT': rospy.Publisher('/evaluation/ldot_detections', MarkerArray, queue_size=10)
+        }
+        self.match_line_pub = rospy.Publisher('/evaluation/match_lines', Marker, queue_size=10)
+        self.metrics_text_pub = rospy.Publisher('/evaluation/metrics_text', MarkerArray, queue_size=10)
     
     def should_stop_evaluation(self):
         """检查是否应该停止评估"""
@@ -186,10 +182,15 @@ class MultiAlgorithmEvaluator:
             is_dynamic = any(keyword in name.lower() for keyword in self.dynamic_keywords)
             
             if is_dynamic:
+                # 估计边界框尺寸
+                bbox_size = np.array(self.default_bbox_size)
+                
+                # Gazebo 的 position.z 是底部位置，需要转换为中心位置
+                # 用于数据关联时计算准确的 3D 距离
                 position = np.array([
                     msg.pose[i].position.x,
                     msg.pose[i].position.y,
-                    msg.pose[i].position.z
+                    msg.pose[i].position.z + bbox_size[2] / 2.0  # 转换为中心位置
                 ])
                 
                 velocity = np.array([
@@ -197,9 +198,6 @@ class MultiAlgorithmEvaluator:
                     msg.twist[i].linear.y,
                     msg.twist[i].linear.z
                 ])
-                
-                # 估计边界框尺寸
-                bbox_size = np.array(self.default_bbox_size)
                 
                 detection = StandardDetection(
                     obj_id=i,
@@ -270,16 +268,14 @@ class MultiAlgorithmEvaluator:
             self.algo_metrics_dict[algo_name]['metrics'].append(metrics)
             
             # 可视化
-            if self.enable_visualization:
-                self.visualize_detections(algo_name, detections, matches)
+            self.visualize_detections(algo_name, detections, matches)
         
         # 增加帧计数
         self.frame_count += 1
         
-        # 可视化真值
-        if self.enable_visualization:
-            self.visualize_ground_truth()
-            self.visualize_metrics()
+        # 可视化真值和指标
+        self.visualize_ground_truth()
+        self.visualize_metrics()
     
     def visualize_ground_truth(self):
         """可视化真值"""
@@ -295,10 +291,10 @@ class MultiAlgorithmEvaluator:
             marker.action = Marker.ADD
             
             # RViz 的 CUBE marker 位置是中心点
-            # Gazebo 的 position.z 是底部位置，需要向上偏移半个高度
+            # detection.position 已经是中心位置，直接使用
             marker.pose.position.x = detection.position[0]
             marker.pose.position.y = detection.position[1]
-            marker.pose.position.z = detection.position[2] + detection.bbox_size[2] / 2.0
+            marker.pose.position.z = detection.position[2]
             marker.pose.orientation.w = 1.0
             
             marker.scale.x = detection.bbox_size[0]
@@ -437,17 +433,17 @@ class MultiAlgorithmEvaluator:
         plot_gen = PlotGenerator(self.output_dir)
         
         try:
-            plot_gen.plot_time_series(self.algo_metrics_dict)
+            plot_gen.plot_time_series(self.algo_metrics_dict, timestamp=self.timestamp)
         except Exception as e:
             rospy.logerr(f"Failed to generate time series plot: {e}")
         
         try:
-            plot_gen.plot_radar_chart(overall_metrics)
+            plot_gen.plot_radar_chart(overall_metrics, timestamp=self.timestamp)
         except Exception as e:
             rospy.logerr(f"Failed to generate radar chart: {e}")
         
         try:
-            plot_gen.generate_performance_table(overall_metrics)
+            plot_gen.generate_performance_table(overall_metrics, timestamp=self.timestamp)
         except Exception as e:
             rospy.logerr(f"Failed to generate performance table: {e}")
         
@@ -458,7 +454,7 @@ class MultiAlgorithmEvaluator:
     
     def save_frame_metrics_csv(self):
         """保存逐帧指标到CSV"""
-        csv_path = os.path.join(self.output_dir, 'frame_metrics.csv')
+        csv_path = os.path.join(self.output_dir, f'frame_metrics_{self.timestamp}.csv')
         
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
@@ -483,7 +479,7 @@ class MultiAlgorithmEvaluator:
     
     def save_overall_metrics_json(self, overall_metrics):
         """保存总体指标到JSON"""
-        json_path = os.path.join(self.output_dir, 'summary.json')
+        json_path = os.path.join(self.output_dir, f'summary_{self.timestamp}.json')
         
         elapsed_time = (rospy.Time.now() - self.start_time).to_sec()
         
@@ -494,7 +490,6 @@ class MultiAlgorithmEvaluator:
             'total_frames': self.frame_count,
             'parameters': {
                 'distance_threshold': self.distance_threshold,
-                'iou_threshold': self.iou_threshold,
                 'update_freq': self.update_freq,
                 'max_frames': self.max_frames
             },

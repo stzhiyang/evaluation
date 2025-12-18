@@ -78,7 +78,7 @@ class PlotGenerator:
         padding = values[:window_size-1]
         return np.concatenate([padding, smoothed])
     
-    def plot_time_series(self, algo_metrics_dict, save_path=None):
+    def plot_time_series(self, algo_metrics_dict, save_path=None, timestamp=None):
         """
         绘制时序对比曲线图 - 2x2网格布局 + 滑动平均线
         Args:
@@ -88,9 +88,11 @@ class PlotGenerator:
                 ...
             }
             save_path: 保存路径,默认为output_dir/time_series.png
+            timestamp: 时间戳字符串，用于文件名
         """
         if save_path is None:
-            save_path = os.path.join(self.output_dir, 'time_series.png')
+            filename = f'time_series_{timestamp}.png' if timestamp else 'time_series.png'
+            save_path = os.path.join(self.output_dir, filename)
         
         # 创建2x2网格布局
         fig, axes = plt.subplots(2, 2, figsize=(16, 10))
@@ -175,7 +177,7 @@ class PlotGenerator:
         
         print(f"Time series plot saved to: {save_path}")
     
-    def plot_radar_chart(self, algo_overall_metrics, save_path=None):
+    def plot_radar_chart(self, algo_overall_metrics, save_path=None, timestamp=None):
         """
         绘制雷达图
         Args:
@@ -185,9 +187,11 @@ class PlotGenerator:
                 ...
             }
             save_path: 保存路径
+            timestamp: 时间戳字符串，用于文件名
         """
         if save_path is None:
-            save_path = os.path.join(self.output_dir, 'radar_chart.png')
+            filename = f'radar_chart_{timestamp}.png' if timestamp else 'radar_chart.png'
+            save_path = os.path.join(self.output_dir, filename)
         
         # 准备数据
         categories = ['Recall', 'Precision', 'F1-Score', 'MOTP\n(normalized)']
@@ -242,7 +246,7 @@ class PlotGenerator:
         
         print(f"Radar chart saved to: {save_path}")
     
-    def generate_performance_table(self, algo_overall_metrics, save_path=None):
+    def generate_performance_table(self, algo_overall_metrics, save_path=None, timestamp=None):
         """
         生成性能汇总表格
         Args:
@@ -252,9 +256,11 @@ class PlotGenerator:
                 ...
             }
             save_path: 保存路径
+            timestamp: 时间戳字符串，用于文件名
         """
         if save_path is None:
-            save_path = os.path.join(self.output_dir, 'performance_table.txt')
+            filename = f'performance_table_{timestamp}.txt' if timestamp else 'performance_table.txt'
+            save_path = os.path.join(self.output_dir, filename)
         
         # 创建表格
         fig, ax = plt.subplots(figsize=(12, len(algo_overall_metrics) * 1.2 + 1))

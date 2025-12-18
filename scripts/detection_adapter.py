@@ -145,98 +145,7 @@ class DetectionAdapter:
         
         return detections
     
-    def parse_fapp(self, states_msg):
-        """
-        解析FAPP的ObjectsStates消息
-        Args:
-            states_msg: obj_state_msgs/ObjectsStates
-        Returns:
-            list of StandardDetection
-        """
-        if states_msg is None:
-            return []
-        
-        detections = []
-        for i, state in enumerate(states_msg.states):
-            position = np.array([
-                state.position.x,
-                state.position.y,
-                state.position.z
-            ])
-            
-            velocity = np.array([
-                state.velocity.x,
-                state.velocity.y,
-                state.velocity.z
-            ])
-            
-            bbox_size = np.array([
-                state.size.x,
-                state.size.y,
-                state.size.z
-            ])
-            
-            detection = StandardDetection(
-                obj_id=i,
-                position=position,
-                velocity=velocity,
-                bbox_size=bbox_size,
-                timestamp=states_msg.header.stamp.to_sec()
-            )
-            detections.append(detection)
-        
-        return detections
-    
-    def parse_lvdot(self, marker_array_msg):
-        """
-        解析LV-DOT的MarkerArray输出
-        Args:
-            marker_array_msg: visualization_msgs/MarkerArray
-        Returns:
-            list of StandardDetection
-        """
-        if marker_array_msg is None:
-            return []
-        
-        detections = []
-        for marker in marker_array_msg.markers:
-            position = np.array([
-                marker.pose.position.x,
-                marker.pose.position.y,
-                marker.pose.position.z
-            ])
-            
-            bbox_size = np.array([
-                marker.scale.x,
-                marker.scale.y,
-                marker.scale.z
-            ])
-            
-            # 尝试从marker文本中提取速度信息
-            velocity = self._extract_velocity_from_marker(marker)
-            
-            detection = StandardDetection(
-                obj_id=marker.id,
-                position=position,
-                velocity=velocity,
-                bbox_size=bbox_size,
-                timestamp=rospy.Time.now().to_sec()  # MarkerArray可能没有时间戳
-            )
-            detections.append(detection)
-        
-        return detections
-    
-    def parse_generic_markerarray(self, marker_array_msg):
-        """
-        解析通用MarkerArray格式(第四算法)
-        Args:
-            marker_array_msg: visualization_msgs/MarkerArray
-        Returns:
-            list of StandardDetection
-        """
-        # 默认使用与LV-DOT相同的解析方式
-        return self.parse_lvdot(marker_array_msg)
-    
+
     def _odom_callback(self, msg):
         """
         里程计回调，更新机器人位置和传感器位置
@@ -301,60 +210,27 @@ class DetectionAdapter:
         sensor_to_centroid = centroid - self.sensor_position
         
         distance_to_sensor = np.linalg.norm(sensor_to_centroid)
-        if distance_to_sensor < 0.1:  # 避免除零
+        if distance_to_sensor < 0.1:
             return centroid
         
         # 归一化方向向量（3D）
         direction = sensor_to_centroid / distance_to_sensor
         
         # 计算点云在传感器方向上的 3D 投影范围
-        # 将每个点投影到传感器-质心连线上
         projections = np.dot(cluster_points - self.sensor_position, direction)
-        min_proj = np.min(projections)  # 最近的点（朝向传感器）
-        max_proj = np.max(projections)  # 最远的点（远离传感器）
+        min_proj = np.min(projections)
+        max_proj = np.max(projections)
         
         # 补偿策略：假设物体是对称的，几何中心应该在深度范围的中点
-        # 当前质心的投影位置
         centroid_proj = np.dot(centroid - self.sensor_position, direction)
-        
-        # 理想的几何中心投影位置（深度范围中点）
         ideal_proj = (min_proj + max_proj) / 2.0
-        
-        # 需要的偏移量（正值表示远离传感器）
         offset_distance = ideal_proj - centroid_proj
         
         # 应用 3D 补偿
         compensated_center = centroid + direction * offset_distance
         
         return compensated_center
-    
-    def _extract_velocity_from_marker(self, marker):
-        """
-        从Marker的text字段提取速度信息(如果有)
-        Args:
-            marker: visualization_msgs/Marker
-        Returns:
-            numpy array [vx, vy, vz]
-        """
-        # 默认速度为0
-        velocity = np.array([0.0, 0.0, 0.0])
-        
-        if hasattr(marker, 'text') and marker.text:
-            try:
-                # 尝试解析类似 "vel: 1.2, 0.5, 0.0" 的格式
-                if 'vel:' in marker.text.lower():
-                    vel_str = marker.text.lower().split('vel:')[1].strip()
-                    vel_parts = vel_str.split(',')
-                    if len(vel_parts) >= 3:
-                        velocity = np.array([
-                            float(vel_parts[0]),
-                            float(vel_parts[1]),
-                            float(vel_parts[2])
-                        ])
-            except:
-                pass
-        
-        return velocity
+
 
 
 if __name__ == '__main__':
