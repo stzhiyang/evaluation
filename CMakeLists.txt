@@ -17,6 +17,7 @@ catkin_install_python(PROGRAMS
   scripts/data_association.py
   scripts/plot_generator.py
   scripts/multi_algo_evaluator.py
+  scripts/performance_evaluator.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -1,0 +1,36 @@
+<!-- 
+性能评估启动文件
+Performance Evaluation Launch File
+
+使用方法:
+1. 确保算法节点未启动
+2. 启动此launch文件: roslaunch evaluation performance_evaluation.launch
+3. 等待基线测量完成（5秒）
+4. 按提示启动算法节点
+5. 等待评估完成（默认60秒）
+6. 查看结果: evaluation/results/performance_YYYYMMDD_HHMMSS/
+-->
+
+<launch>
+    <!-- 性能评估节点 -->
+    <node 
+        name="performance_evaluator" 
+        pkg="evaluation" 
+        type="performance_evaluator.py" 
+        output="screen"
+        required="true">
+        
+        <!-- 加载配置文件 -->
+        <rosparam command="load" file="$(find evaluation)/config/performance_config.yaml" />
+        
+        <!-- 可以在这里覆盖配置参数 -->
+        <!-- 例如: -->
+        <!-- <param name="evaluation_duration" value="120.0" /> -->
+        <!-- <param name="monitor_freq" value="2.0" /> -->
+        
+    </node>
+
+    <!-- 日志级别 -->
+    <env name="ROSCONSOLE_CONFIG_FILE" value="$(find evaluation)/config/rosconsole.conf" if="false"/>
+
+</launch>

@@ -1,0 +1,43 @@
+<!-- 
+算法耗时计算启动文件
+Timing Calculation Launch File
+
+功能说明:
+- 读取指定的 CSV 文件，计算各算法的平均耗时
+- 要求每个 CSV 文件至少有 100 组有效数据
+- 有效数据条件：除 Timestamp 和 PointCount 外，所有时间变量 > 0.001 秒
+- 计算方法：取倒数 100 组有效数据的 TotalTime 平均值
+- 生成带时间戳的 TXT 报告文件
+
+使用方法:
+1. 修改下方的 CSV 文件路径，指定四个算法的 timing 文件
+2. 修改输出目录路径（可选）
+3. 启动: roslaunch evaluation timing_calculation.launch
+4. 查看结果: evaluation/results/timing_reports/timing_report_YYYYMMDD_HHMMSS.txt
+-->
+
+<launch>
+    <!-- 耗时计算节点 -->
+    <node 
+        name="timing_calculator" 
+        pkg="evaluation" 
+        type="calculate_timing.py" 
+        output="screen"
+        required="true">
+        
+        <!-- 配置四个算法的 CSV 文件路径 -->
+        <!-- 请根据实际情况修改这些路径 -->
+        <rosparam param="csv_files">
+            LDOT: "$(find evaluation)/../LDOT/ldot_detector/timing/test_ldot_timing_20251219_174821_680.csv"
+            M-detector: "$(find evaluation)/../M-detector/timing/test_mdetector_timing_20251219_210219_424.csv"
+            LV-DOT: "$(find evaluation)/../LV-DOT/onboard_detector/timing/test_lvdot_timing_YYYYMMDD_HHMMSS.csv"
+            FAPP: "$(find evaluation)/../FAPP/timing/test_fapp_timing_YYYYMMDD_HHMMSS.csv"
+        </rosparam>
+        
+        <!-- 输出目录配置 -->
+        <!-- 报告将保存为: output_dir/timing_report_YYYYMMDD_HHMMSS.txt -->
+        <param name="output_dir" value="$(find evaluation)/results/timing_eval" />
+        
+    </node>
+
+</launch>

@@ -1,0 +1,31 @@
+# 单算法性能评估配置文件
+# 用于测量单个算法启动前后的CPU和内存消耗
+
+# 算法名称（用于显示和文件命名）"M-detector","LVDOT","LDOT","FAPP"
+algorithm_name: "LVDOT"
+
+# ROS节点名称（用于检查节点是否运行）
+# dynfilter,detector_node,ldot_detector_node,mapping_node
+node_name: "detector_node"
+
+# 监控频率 (Hz)
+# 建议: 1-5 Hz，太高会影响系统性能
+monitor_freq: 1.0
+
+# 基线测量时长（秒）
+# 在算法启动前测量系统基线资源占用
+# 建议: 10-30秒
+baseline_duration: 30.0
+
+# 运行测量时长（秒）
+# 算法启动后测量系统资源占用
+# 建议: 60-120秒，时间越长统计越稳定
+running_duration: 60.0
+
+# 输出目录
+# 相对于 evaluation 包的路径
+# 每次运行会自动创建带时间戳和算法名称的子文件夹
+# 例如: results/performance_M_detector_20231216_143025/
+output_dir: "results/"
+
+
