@@ -12,19 +12,29 @@ from datetime import datetime
 from pathlib import Path
 
 
-def is_valid_row(row, exclude_columns=['Timestamp', 'PointCount']):
+def is_valid_row(row, algorithm_name, exclude_columns=['Timestamp', 'PointCount']):
     """
     检查一行数据是否有效
-    有效条件：除了 Timestamp 和 PointCount 外，所有数值列的值都要大于 0.001
+    有效条件：
+    - LV-DOT: 只需要 TotalTime > 1
+    - 其他算法: 除了 Timestamp 和 PointCount 外，所有数值列的值都要大于 0.001
     
     Args:
         row: 字典格式的一行数据
+        algorithm_name: 算法名称
         exclude_columns: 需要排除检查的列名列表
     
     Returns:
         bool: 是否为有效数据
     """
     try:
+        # LV-DOT 特殊处理：只检查 TotalTime > 1
+        if algorithm_name in ['LV-DOT', 'LVDOT', 'LV_DOT']:
+            if 'TotalTime' in row:
+                return float(row['TotalTime']) > 1.0
+            return False
+        
+        # 其他算法：所有时间列都要大于 0.001
         for key, value in row.items():
             # 跳过需要排除的列
             if key in exclude_columns:
@@ -80,7 +90,7 @@ def calculate_average_timing(csv_file_path, algorithm_name):
             # 读取所有有效数据
             for row in reader:
                 total_rows += 1
-                if is_valid_row(row):
+                if is_valid_row(row, algorithm_name):
                     valid_rows.append(float(row['TotalTime']))
         
         result['total_count'] = total_rows

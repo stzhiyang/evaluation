@@ -110,6 +110,12 @@ class MultiAlgorithmEvaluator:
         base_output_dir = rospy.get_param('~output_dir', 
                                          os.path.join(os.path.dirname(__file__), '../results'))
         
+        # 如果是相对路径，转换为相对于evaluation包根目录的绝对路径
+        if not os.path.isabs(base_output_dir):
+            # 获取evaluation包的根目录（scripts的上级目录）
+            package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            base_output_dir = os.path.join(package_root, base_output_dir)
+        
         # 创建带时间戳的子文件夹和文件名前缀
         self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         self.output_dir = os.path.join(base_output_dir, f'eval_{self.timestamp}')
