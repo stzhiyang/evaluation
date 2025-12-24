@@ -10,16 +10,26 @@ import numpy as np
 from sensor_msgs.msg import PointCloud2
 import sensor_msgs.point_cloud2 as pc2
 from sklearn.cluster import DBSCAN
+from visualization_msgs.msg import MarkerArray
+
+# FAPP消息类型
+try:
+    from obj_state_msgs.msg import ObjectsStates, State
+    FAPP_AVAILABLE = True
+except ImportError:
+    rospy.logwarn("obj_state_msgs not found, FAPP support disabled")
+    FAPP_AVAILABLE = False
 
 
 class StandardDetection:
     """标准检测结果格式"""
-    def __init__(self, obj_id, position, velocity, bbox_size, timestamp):
+    def __init__(self, obj_id, position, velocity, bbox_size, timestamp, point_cloud=None):
         self.id = obj_id
         self.position = np.array(position)  # [x, y, z]
         self.velocity = np.array(velocity)  # [vx, vy, vz]
         self.bbox_size = np.array(bbox_size)  # [length, width, height]
         self.timestamp = timestamp
+        self.point_cloud = point_cloud  # np.array of shape (N, 3) for IOU calculation
     
     def to_dict(self):
         return {
@@ -27,7 +37,8 @@ class StandardDetection:
             'position': self.position.tolist(),
             'velocity': self.velocity.tolist(),
             'bbox_size': self.bbox_size.tolist(),
-            'timestamp': self.timestamp
+            'timestamp': self.timestamp,
+            'num_points': len(self.point_cloud) if self.point_cloud is not None else 0
         }
 
 
@@ -35,17 +46,14 @@ class DetectionAdapter:
     """检测结果适配器"""
     
     def __init__(self):
-        # M-detector DBSCAN聚类参数
+        # DBSCAN聚类参数（仅用于M-detector点云）
         self.dbscan_eps = rospy.get_param('~mdetector_dbscan_eps', 0.8)
         self.dbscan_min_samples = rospy.get_param('~mdetector_dbscan_min_samples', 5)
         
-        # 位置估计方法: 'centroid'(质心) 或 'bbox'(边界框中心) 或 'obb'(定向边界框)
-        self.position_method = rospy.get_param('~position_estimation_method', 'bbox')
-        
         rospy.loginfo(f"DetectionAdapter initialized")
-        rospy.loginfo(f"  DBSCAN eps: {self.dbscan_eps}, min_samples: {self.dbscan_min_samples}")
-        rospy.loginfo(f"  Position estimation: {self.position_method}")
-        rospy.loginfo(f"  Bbox size: dynamically computed from point cloud")
+        rospy.loginfo(f"  M-detector: DBSCAN eps={self.dbscan_eps}, min_samples={self.dbscan_min_samples}")
+        rospy.loginfo(f"  FAPP: ObjectsStates with position/velocity/size")
+        rospy.loginfo(f"  LV-DOT/LDOT: MarkerArray with bbox position/size")
         
     def parse_mdetector(self, pointcloud_msg):
         """
@@ -83,8 +91,12 @@ class DetectionAdapter:
         for label in unique_labels:
             cluster_points = points[labels == label]
             
-            # 计算物体位置和边界框
-            center, size = self._estimate_object_center_and_size(cluster_points)
+            # 计算点云质心和边界框尺寸
+            center = np.mean(cluster_points, axis=0)
+            min_bound = np.min(cluster_points, axis=0)
+            max_bound = np.max(cluster_points, axis=0)
+            size = max_bound - min_bound
+            size = np.maximum(size, 0.01)  # 防止尺寸为零
             
             # 速度信息（点云不提供）
             velocity = np.array([0.0, 0.0, 0.0])
@@ -94,97 +106,121 @@ class DetectionAdapter:
                 position=center,
                 velocity=velocity,
                 bbox_size=size,
-                timestamp=pointcloud_msg.header.stamp.to_sec()
+                timestamp=pointcloud_msg.header.stamp.to_sec(),
+                point_cloud=cluster_points  # 保存点云数据用于IOU计算
             )
             detections.append(detection)
         
         return detections
     
-    def _estimate_object_center_and_size(self, points):
+    def parse_fapp(self, objects_states_msg):
         """
-        估计物体的中心位置和尺寸
-        解决激光雷达只能看到物体一侧导致质心偏移的问题
-        
+        解析FAPP的ObjectsStates输出
         Args:
-            points: Nx3 numpy array of point cloud
-        
+            objects_states_msg: obj_state_msgs/ObjectsStates
         Returns:
-            center: 3D position (estimated object center)
-            size: 3D bounding box size
+            list of StandardDetection
         """
-        if self.position_method == 'centroid':
-            # 方法1: 简单质心（存在偏移问题）
-            center = np.mean(points, axis=0)
-            min_bound = np.min(points, axis=0)
-            max_bound = np.max(points, axis=0)
-            size = max_bound - min_bound
-            
-        elif self.position_method == 'bbox':
-            # 方法2: 轴对齐边界框(AABB)中心（推荐，简单有效）
-            min_bound = np.min(points, axis=0)
-            max_bound = np.max(points, axis=0)
-            center = (min_bound + max_bound) / 2.0  # 使用边界框几何中心
-            size = max_bound - min_bound
-            
-        elif self.position_method == 'obb':
-            # 方法3: 定向边界框(OBB)中心（最准确，使用PCA找主方向）
-            center, size = self._compute_oriented_bbox(points)
-            
-        else:
-            rospy.logwarn(f"Unknown position method: {self.position_method}, using bbox")
-            min_bound = np.min(points, axis=0)
-            max_bound = np.max(points, axis=0)
-            center = (min_bound + max_bound) / 2.0
-            size = max_bound - min_bound
+        if objects_states_msg is None or not FAPP_AVAILABLE:
+            return []
         
-        # 防止尺寸为零
-        size = np.maximum(size, 0.01)
+        detections = []
         
-        return center, size
+        for i, state in enumerate(objects_states_msg.states):
+            position = np.array([
+                state.position.x,
+                state.position.y,
+                state.position.z
+            ])
+            
+            velocity = np.array([
+                state.velocity.x,
+                state.velocity.y,
+                state.velocity.z
+            ])
+            
+            bbox_size = np.array([
+                state.size.x,
+                state.size.y,
+                state.size.z
+            ])
+            
+            # FAPP的size字段可能为0，使用默认尺寸
+            if np.sum(bbox_size) < 0.01:  # 如果尺寸太小或为0
+                bbox_size = np.array([0.5, 0.5, 1.5])  # 默认人体尺寸
+            
+            # FAPP有独立的位置输出，点云为None
+            detection = StandardDetection(
+                obj_id=i,
+                position=position,
+                velocity=velocity,
+                bbox_size=bbox_size,
+                timestamp=objects_states_msg.header.stamp.to_sec(),
+                point_cloud=None  # FAPP无点云，有独立位置
+            )
+            detections.append(detection)
+        
+        return detections
     
-    def _compute_oriented_bbox(self, points):
+    def parse_marker_array(self, marker_array_msg):
         """
-        使用PCA计算定向边界框(OBB)
-        通过主成分分析找到物体的主方向，在主方向坐标系中计算边界框
-        
+        解析LV-DOT/LDOT的MarkerArray输出（动态bbox）
         Args:
-            points: Nx3 numpy array
-        
+            marker_array_msg: visualization_msgs/MarkerArray
         Returns:
-            center: OBB中心位置
-            size: OBB尺寸
+            list of StandardDetection
         """
-        # 计算质心
-        centroid = np.mean(points, axis=0)
+        if marker_array_msg is None:
+            return []
         
-        # 中心化点云
-        centered_points = points - centroid
+        detections = []
         
-        # PCA - 找到主方向
-        cov_matrix = np.cov(centered_points.T)
-        eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
+        for marker in marker_array_msg.markers:
+            if marker.type != 5:  # LINE_LIST type
+                continue
+            
+            # 从marker提取位置和尺寸
+            # marker.pose.position是box中心位置
+            # marker中的corner点定义了box尺寸
+            position = np.array([
+                marker.pose.position.x,
+                marker.pose.position.y,
+                marker.pose.position.z
+            ])
+            
+            # 从corner点计算尺寸
+            # corner[0] = (-x_width/2, -y_width/2, -z_width)
+            # 根据publish3dBox的实现，第一个点是corner[0]
+            if len(marker.points) >= 2:
+                # 第一条边是corner[0]到corner[1]
+                corner0 = marker.points[0]
+                corner2 = marker.points[4]  # corner[2]在第3条边
+                
+                # 计算实际尺寸（corner在局部坐标系）
+                x_width = abs(corner2.x - corner0.x)
+                y_width = abs(corner2.y - corner0.y)
+                z_width = abs(corner0.z) * 2  # corner0.z = -z_width
+                
+                bbox_size = np.array([x_width, y_width, z_width])
+            else:
+                # 默认尺寸
+                bbox_size = np.array([0.5, 0.5, 1.5])
+            
+            # 速度信息（MarkerArray不提供）
+            velocity = np.array([0.0, 0.0, 0.0])
+            
+            # LV-DOT/LDOT有独立的位置输出
+            detection = StandardDetection(
+                obj_id=marker.id,
+                position=position,
+                velocity=velocity,
+                bbox_size=bbox_size,
+                timestamp=marker.header.stamp.to_sec() if marker.header.stamp.to_sec() > 0 else rospy.Time.now().to_sec(),
+                point_cloud=None  # 有独立位置，不需要点云
+            )
+            detections.append(detection)
         
-        # 按特征值排序（从大到小）
-        idx = eigenvalues.argsort()[::-1]
-        eigenvectors = eigenvectors[:, idx]
-        
-        # 将点云转换到主方向坐标系
-        transformed_points = centered_points @ eigenvectors
-        
-        # 在主方向坐标系中计算AABB
-        min_bound = np.min(transformed_points, axis=0)
-        max_bound = np.max(transformed_points, axis=0)
-        
-        # OBB中心（在主方向坐标系中）
-        obb_center_local = (min_bound + max_bound) / 2.0
-        
-        # 转换回世界坐标系
-        obb_center_world = centroid + (eigenvectors @ obb_center_local)
-        
-        # OBB尺寸
-        size = max_bound - min_bound
-        
-        return obb_center_world, size
+        return detections
 
 
 if __name__ == '__main__':

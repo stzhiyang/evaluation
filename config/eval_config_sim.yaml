@@ -1,7 +1,15 @@
 # 评估器配置文件
 
-# 数据关联参数
-distance_threshold: 1     # 最大匹配距离(米) - 只使用距离判断
+# 数据关联参数 - 双重匹配条件
+distance_threshold: 1.0      # 欧氏距离阈值(米) - 所有算法
+iou_threshold: 0.1           # 3D边界框IOU阈值 - 所有算法
+                             # 匹配条件（必须同时满足）：
+                             # 1. 3D边界框IOU >= iou_threshold
+                             # 2. 中心欧氏距离 < distance_threshold
+                             # 
+                             # 边界框计算方式：
+                             # - 真值：Gazebo模型的position + bbox_size
+                             # - 检测：点云质心(position) + 点云范围(bbox_size)
 
 # 更新频率
 update_freq: 10.0            # 评估更新频率(Hz)
@@ -16,10 +24,10 @@ output_dir: "results/algorithm_eval"        # 相对于evaluation包的路径
 
 # 话题配置
 ground_truth_topic: "/gazebo/model_states"
-mdetector_topic: "/m_detector/frame_out"          # M-detector动态点云
-fapp_topic: "/dynamic_points"                     # FAPP动态点云
-lvdot_topic: "/onboard_detector/dynamic_point_cloud"  # LV-DOT动态点云
-ldot_topic: "/ldot_detector/dynamic_point_cloud"              # ldot动态点云
+mdetector_topic: "/m_detector/point_out"                    # M-detector动态点云 (PointCloud2)
+fapp_topic: "/states"                                       # FAPP动态物体状态 (ObjectsStates: position+velocity+size)
+lvdot_topic: "/onboard_detector/dynamic_bboxes"             # LV-DOT动态边界框 (MarkerArray: position+size)
+ldot_topic: "/ldot_detector/dynamic_bboxes"                 # LDOT动态边界框 (MarkerArray: position+size)
 
 # Gazebo动态物体过滤关键词"actor", "dynamic", "obstacle", "sphere", "box"
 dynamic_keywords: ["person"]
@@ -33,9 +41,3 @@ default_bbox_size: [0.5, 0.5, 1.8]
 # 评估系统需要统一重新聚类，参数需要兼容不同算法的输出特性
 mdetector_dbscan_eps: 0.5    # 聚类半径（米）
 mdetector_dbscan_min_samples: 10  # 最小点数
-# 位置估计方法（解决激光雷达只能看到物体一侧导致的定位偏差问题）
-# 选项:
-#   'centroid' - 简单质心（存在偏向传感器的偏移问题，不推荐）
-#   'bbox'     - 轴对齐边界框(AABB)几何中心（推荐，简单有效）
-#   'obb'      - 定向边界框(OBB)中心，使用PCA找主方向（最准确但计算量大）
-position_estimation_method: 'bbox'

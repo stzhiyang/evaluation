@@ -42,7 +42,8 @@ class MultiAlgorithmEvaluator:
         # 初始化模块
         self.adapter = DetectionAdapter()
         self.associator = DataAssociator(
-            distance_threshold=self.distance_threshold
+            distance_threshold=self.distance_threshold,
+            iou_threshold=self.iou_threshold
         )
         
         # 为每个算法创建计算器
@@ -88,6 +89,11 @@ class MultiAlgorithmEvaluator:
         rospy.loginfo("Multi-Algorithm Evaluator initialized")
         rospy.loginfo(f"Algorithms: M-detector, FAPP, LV-DOT, LDOT")
         rospy.loginfo(f"Update frequency: {self.update_freq} Hz")
+        rospy.loginfo(f"Matching criteria (both must be satisfied):")
+        rospy.loginfo(f"  - 3D Bounding Box IOU >= {self.iou_threshold}")
+        rospy.loginfo(f"  - Euclidean distance < {self.distance_threshold}m")
+        rospy.loginfo(f"  - Position: point cloud centroid (all algorithms)")
+        rospy.loginfo(f"  - Bbox size: from point cloud min/max bounds")
         rospy.loginfo(f"Results will be saved to: {self.output_dir}")
         
         # 打印评估控制信息
@@ -96,8 +102,9 @@ class MultiAlgorithmEvaluator:
     
     def load_parameters(self):
         """加载参数"""
-        # 匹配阈值（只使用距离）
-        self.distance_threshold = rospy.get_param('~distance_threshold', 2.0)
+        # 匹配阈值
+        self.distance_threshold = rospy.get_param('~distance_threshold', 2.0)  # 欧氏距离阈值
+        self.iou_threshold = rospy.get_param('~iou_threshold', 0.1)  # 点云IOU阈值
         
         # 更新频率
         self.update_freq = rospy.get_param('~update_freq', 10.0)
@@ -141,21 +148,24 @@ class MultiAlgorithmEvaluator:
         # 真值
         self.gt_sub = rospy.Subscriber(self.gt_topic, ModelStates, self.gt_callback, queue_size=10)
         
-        # 所有算法统一订阅动态点云(PointCloud2),由评估器统一聚类生成边界框
-        # M-detector
+        # M-detector: 动态点云
         self.mdetector_sub = rospy.Subscriber(self.mdetector_topic, PointCloud2, 
                                              self.mdetector_callback, queue_size=10)
         
-        # FAPP
-        self.fapp_sub = rospy.Subscriber(self.fapp_topic, PointCloud2, 
-                                        self.fapp_callback, queue_size=10)
+        # FAPP: ObjectsStates包含位置、速度、尺寸
+        try:
+            from obj_state_msgs.msg import ObjectsStates
+            self.fapp_sub = rospy.Subscriber(self.fapp_topic, ObjectsStates, 
+                                            self.fapp_callback, queue_size=10)
+        except ImportError:
+            rospy.logwarn("obj_state_msgs not found, FAPP subscription disabled")
         
-        # LV-DOT
-        self.lvdot_sub = rospy.Subscriber(self.lvdot_topic, PointCloud2, 
+        # LV-DOT: MarkerArray包含动态bbox（位置+尺寸）
+        self.lvdot_sub = rospy.Subscriber(self.lvdot_topic, MarkerArray, 
                                          self.lvdot_callback, queue_size=10)
         
-        # LDOT
-        self.ldot_sub = rospy.Subscriber(self.ldot_topic, PointCloud2, 
+        # LDOT: MarkerArray包含动态bbox（位置+尺寸）
+        self.ldot_sub = rospy.Subscriber(self.ldot_topic, MarkerArray, 
                                          self.ldot_callback, queue_size=10)
     
     def setup_publishers(self):
@@ -205,12 +215,15 @@ class MultiAlgorithmEvaluator:
                     msg.twist[i].linear.z
                 ])
                 
+                # 真值直接使用边界框信息，无需生成点云
+                # IOU计算使用3D边界框IOU（position + bbox_size）
                 detection = StandardDetection(
                     obj_id=i,
                     position=position,
                     velocity=velocity,
                     bbox_size=bbox_size,
-                    timestamp=rospy.Time.now().to_sec()
+                    timestamp=rospy.Time.now().to_sec(),
+                    point_cloud=None  # 真值不需要点云
                 )
                 detections.append(detection)
         
@@ -218,23 +231,23 @@ class MultiAlgorithmEvaluator:
         self.gt_buffer.append(detections)
     
     def mdetector_callback(self, msg):
-        """M-detector回调 - 统一使用点云解析"""
+        """M-detector回调 - 点云解析"""
         detections = self.adapter.parse_mdetector(msg)
         self.detection_buffers['M-detector'].append(detections)
     
     def fapp_callback(self, msg):
-        """FAPP回调 - 统一使用点云解析"""
-        detections = self.adapter.parse_mdetector(msg)  # 复用点云解析逻辑
+        """FAPP回调 - ObjectsStates解析"""
+        detections = self.adapter.parse_fapp(msg)
         self.detection_buffers['FAPP'].append(detections)
     
     def lvdot_callback(self, msg):
-        """LV-DOT回调 - 统一使用点云解析"""
-        detections = self.adapter.parse_mdetector(msg)  # 复用点云解析逻辑
+        """LV-DOT回调 - MarkerArray解析"""
+        detections = self.adapter.parse_marker_array(msg)
         self.detection_buffers['LV-DOT'].append(detections)
     
     def ldot_callback(self, msg):
-        """LDOT回调 - 统一使用点云解析"""
-        detections = self.adapter.parse_mdetector(msg)  # 复用点云解析逻辑
+        """LDOT回调 - MarkerArray解析"""
+        detections = self.adapter.parse_marker_array(msg)
         self.detection_buffers['LDOT'].append(detections)
     
     def evaluate_callback(self, event):
