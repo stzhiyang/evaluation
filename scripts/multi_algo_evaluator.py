@@ -74,6 +74,9 @@ class MultiAlgorithmEvaluator:
         # 当前真值
         self.current_gt = []
         
+        # 节点关闭标志
+        self.is_shutdown = False
+        
         # 订阅器
         self.setup_subscribers()
         
@@ -89,11 +92,16 @@ class MultiAlgorithmEvaluator:
         rospy.loginfo("Multi-Algorithm Evaluator initialized")
         rospy.loginfo(f"Algorithms: M-detector, FAPP, LV-DOT, LDOT")
         rospy.loginfo(f"Update frequency: {self.update_freq} Hz")
+        rospy.loginfo(f"Visualization mode: {self.visualization_mode}")
+        rospy.loginfo(f"Timestamp mode: {self.timestamp_mode}")
         rospy.loginfo(f"Matching criteria (both must be satisfied):")
         rospy.loginfo(f"  - 3D Bounding Box IOU >= {self.iou_threshold}")
         rospy.loginfo(f"  - Euclidean distance < {self.distance_threshold}m")
         rospy.loginfo(f"  - Position: point cloud centroid (all algorithms)")
         rospy.loginfo(f"  - Bbox size: from point cloud min/max bounds")
+        rospy.loginfo(f"Evaluation metrics explanation:")
+        rospy.loginfo(f"  - MOTP (visualization): Current frame average position error")
+        rospy.loginfo(f"  - MOTP (final result): All frames cumulative average position error")
         rospy.loginfo(f"Results will be saved to: {self.output_dir}")
         
         # 打印评估控制信息
@@ -108,6 +116,15 @@ class MultiAlgorithmEvaluator:
         
         # 更新频率
         self.update_freq = rospy.get_param('~update_freq', 10.0)
+        
+        # 可视化模式：'immediate' 在接收到数据时立即可视化（推荐），'timer' 在定时器中可视化
+        self.visualization_mode = rospy.get_param('~visualization_mode', 'immediate')
+        
+        # 时间戳模式：'original' 使用消息原始时间戳（推荐，保留时序准确性），'now' 使用当前时间戳（实时显示）
+        self.timestamp_mode = rospy.get_param('~timestamp_mode', 'original')
+        
+        # 是否打印时间戳调试信息
+        self.debug_timestamps = rospy.get_param('~debug_timestamps', False)
         
         # 评估控制参数 - 新增
         self.max_frames = rospy.get_param('~max_frames', 0)  # 最大评估帧数，0表示无限制
@@ -217,38 +234,67 @@ class MultiAlgorithmEvaluator:
                 
                 # 真值直接使用边界框信息，无需生成点云
                 # IOU计算使用3D边界框IOU（position + bbox_size）
+                # 使用仿真时间作为时间戳（rospy.Time.now() 在 use_sim_time=true 时返回仿真时间）
                 detection = StandardDetection(
                     obj_id=i,
                     position=position,
                     velocity=velocity,
                     bbox_size=bbox_size,
-                    timestamp=rospy.Time.now().to_sec(),
+                    timestamp=rospy.Time.now().to_sec(),  # Gazebo ModelStates 无 header，使用当前仿真时间
                     point_cloud=None  # 真值不需要点云
                 )
                 detections.append(detection)
         
         self.current_gt = detections
         self.gt_buffer.append(detections)
+        
+        # 在 immediate 模式下立即可视化真值，保持与检测结果同步
+        if self.visualization_mode == 'immediate':
+            self.visualize_ground_truth()
     
     def mdetector_callback(self, msg):
         """M-detector回调 - 点云解析"""
+        if self.is_shutdown:
+            return
         detections = self.adapter.parse_mdetector(msg)
         self.detection_buffers['M-detector'].append(detections)
+        
+        # 立即可视化检测结果
+        if self.visualization_mode == 'immediate':
+            self.visualize_detections('M-detector', detections, [])
     
     def fapp_callback(self, msg):
         """FAPP回调 - ObjectsStates解析"""
+        if self.is_shutdown:
+            return
         detections = self.adapter.parse_fapp(msg)
         self.detection_buffers['FAPP'].append(detections)
+        
+        # 立即可视化检测结果
+        if self.visualization_mode == 'immediate':
+            self.visualize_detections('FAPP', detections, [])
     
     def lvdot_callback(self, msg):
         """LV-DOT回调 - MarkerArray解析"""
+        if self.is_shutdown:
+            return
         detections = self.adapter.parse_marker_array(msg)
         self.detection_buffers['LV-DOT'].append(detections)
+        
+        # 立即可视化检测结果
+        if self.visualization_mode == 'immediate':
+            self.visualize_detections('LV-DOT', detections, [])
     
     def ldot_callback(self, msg):
         """LDOT回调 - MarkerArray解析"""
+        if self.is_shutdown:
+            return
         detections = self.adapter.parse_marker_array(msg)
         self.detection_buffers['LDOT'].append(detections)
+        
+        # 立即可视化检测结果
+        if self.visualization_mode == 'immediate':
+            self.visualize_detections('LDOT', detections, [])
     
     def evaluate_callback(self, event):
         """评估定时回调"""
@@ -257,6 +303,7 @@ class MultiAlgorithmEvaluator:
         
         # 检查是否达到评估限制
         if self.should_stop_evaluation():
+            self.is_shutdown = True  # 设置关闭标志
             rospy.loginfo("Evaluation limit reached. Stopping...")
             self.save_results()
             rospy.signal_shutdown("Evaluation completed")
@@ -272,6 +319,13 @@ class MultiAlgorithmEvaluator:
             # 获取最新检测结果
             detections = self.detection_buffers[algo_name][-1]
             
+            # 调试：打印时间戳差异
+            if self.debug_timestamps and len(detections) > 0 and len(self.current_gt) > 0:
+                gt_time = self.current_gt[0].timestamp
+                det_time = detections[0].timestamp
+                delay_ms = (gt_time - det_time) * 1000
+                rospy.loginfo_throttle(2.0, f"{algo_name} timestamp delay: {delay_ms:.1f} ms (GT: {gt_time:.3f}, Det: {det_time:.3f})")
+            
             # 数据关联
             matches, unmatched_gt, unmatched_det = self.associator.associate(
                 self.current_gt, detections
@@ -286,24 +340,36 @@ class MultiAlgorithmEvaluator:
             self.algo_metrics_dict[algo_name]['timestamps'].append(current_time)
             self.algo_metrics_dict[algo_name]['metrics'].append(metrics)
             
-            # 可视化
-            self.visualize_detections(algo_name, detections, matches)
+            # 在定时器模式下可视化检测结果
+            if self.visualization_mode == 'timer':
+                self.visualize_detections(algo_name, detections, matches)
         
         # 增加帧计数
         self.frame_count += 1
         
-        # 可视化真值和指标
-        self.visualize_ground_truth()
+        # 在 timer 模式下可视化真值和指标
+        if self.visualization_mode == 'timer':
+            self.visualize_ground_truth()
+        
+        # 指标文本始终在定时器中更新（避免过于频繁）
         self.visualize_metrics()
     
     def visualize_ground_truth(self):
         """可视化真值"""
         marker_array = MarkerArray()
         
+        # 根据时间戳模式选择时间戳
+        if self.timestamp_mode == 'original' and len(self.current_gt) > 0 and self.current_gt[0].timestamp is not None:
+            # 使用真值数据的原始时间戳，保留时序准确性
+            timestamp = rospy.Time.from_sec(self.current_gt[0].timestamp)
+        else:
+            # 使用 Time(0) 让 RViz 自动使用最新的 TF 变换
+            timestamp = rospy.Time(0)
+        
         for detection in self.current_gt:
             marker = Marker()
             marker.header.frame_id = "world"
-            marker.header.stamp = rospy.Time.now()
+            marker.header.stamp = timestamp  # 使用 Time(0) 确保实时显示
             marker.ns = "ground_truth"
             marker.id = detection.id
             marker.type = Marker.CUBE
@@ -329,7 +395,12 @@ class MultiAlgorithmEvaluator:
             
             marker_array.markers.append(marker)
         
-        self.gt_marker_pub.publish(marker_array)
+        # 检查节点是否正在关闭
+        if not self.is_shutdown:
+            try:
+                self.gt_marker_pub.publish(marker_array)
+            except rospy.ROSException:
+                pass
     
     def visualize_detections(self, algo_name, detections, matches):
         """可视化检测结果"""
@@ -345,10 +416,18 @@ class MultiAlgorithmEvaluator:
         
         color = colors.get(algo_name, (0.5, 0.5, 0.5, 0.6))
         
+        # 根据时间戳模式选择时间戳
+        if self.timestamp_mode == 'original' and len(detections) > 0 and detections[0].timestamp is not None:
+            # 使用检测数据的原始时间戳，可以看出算法延迟
+            timestamp = rospy.Time.from_sec(detections[0].timestamp)
+        else:
+            # 使用 Time(0) 让 RViz 自动使用最新的 TF 变换
+            timestamp = rospy.Time(0)
+        
         for detection in detections:
             marker = Marker()
             marker.header.frame_id = "world"
-            marker.header.stamp = rospy.Time.now()
+            marker.header.stamp = timestamp  # 使用 Time(0) 确保实时显示
             marker.ns = algo_name
             marker.id = detection.id
             marker.type = Marker.CUBE
@@ -372,8 +451,13 @@ class MultiAlgorithmEvaluator:
             
             marker_array.markers.append(marker)
         
-        if algo_name in self.det_marker_pubs:
-            self.det_marker_pubs[algo_name].publish(marker_array)
+        # 检查节点是否正在关闭，避免发布到已关闭的 topic
+        if not self.is_shutdown and algo_name in self.det_marker_pubs:
+            try:
+                self.det_marker_pubs[algo_name].publish(marker_array)
+            except rospy.ROSException:
+                # 忽略关闭时的发布错误
+                pass
     
     def visualize_metrics(self):
         """可视化实时指标 - 横向并排显示"""
@@ -398,16 +482,19 @@ class MultiAlgorithmEvaluator:
             latest_metrics = self.algo_metrics_dict[algo_name]['metrics'][-1]
             color = algo_colors.get(algo_name, (1.0, 1.0, 1.0))
             
-            # 算法名称和指标文本
+            # 算法名称和指标文本 - 显示更详细的信息
             text = f"{algo_name}\n"
             text += f"R:{latest_metrics['recall']:.2f} "
             text += f"P:{latest_metrics['precision']:.2f}\n"
-            text += f"F1:{latest_metrics['f1']:.2f} "
-            text += f"MOTP:{latest_metrics['motp']:.2f}m"
+            text += f"F1:{latest_metrics['f1']:.2f}\n"
+            text += f"MOTP:{latest_metrics['motp']:.2f}m\n"
+            text += f"TP:{latest_metrics['tp']} "
+            text += f"FP:{latest_metrics['fp']} "
+            text += f"FN:{latest_metrics['fn']}"
             
             marker = Marker()
             marker.header.frame_id = "world"
-            marker.header.stamp = rospy.Time.now()
+            marker.header.stamp = rospy.Time(0)  # 使用 Time(0) 确保文本显示
             marker.ns = "metrics_text"
             marker.id = i
             marker.type = Marker.TEXT_VIEW_FACING
@@ -419,7 +506,7 @@ class MultiAlgorithmEvaluator:
             marker.pose.position.z = 4.0  # 固定高度
             marker.pose.orientation.w = 1.0
             
-            marker.scale.z = 0.4  # 稍大的字体
+            marker.scale.z = 0.35  # 字体大小（调小以容纳更多文本）
             
             # 使用算法对应的颜色
             marker.color.r = color[0]
@@ -432,7 +519,12 @@ class MultiAlgorithmEvaluator:
             
             marker_array.markers.append(marker)
         
-        self.metrics_text_pub.publish(marker_array)
+        # 检查节点是否正在关闭
+        if not self.is_shutdown:
+            try:
+                self.metrics_text_pub.publish(marker_array)
+            except rospy.ROSException:
+                pass
     
     def save_results(self):
         """保存评估结果"""
