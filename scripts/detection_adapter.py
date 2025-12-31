@@ -11,6 +11,7 @@ from sensor_msgs.msg import PointCloud2
 import sensor_msgs.point_cloud2 as pc2
 from sklearn.cluster import DBSCAN
 from visualization_msgs.msg import MarkerArray
+from geometry_msgs.msg import PoseStamped, PoseArray
 
 # FAPP消息类型
 try:
@@ -45,15 +46,24 @@ class StandardDetection:
 class DetectionAdapter:
     """检测结果适配器"""
     
-    def __init__(self):
+    def __init__(self, mocap_id_height_map=None):
+        """
+        Args:
+            mocap_id_height_map: 动捕ID到Z轴高度的映射字典，例如 {'car': 0.5, 'person': 1.0, 'drone': 1.5}
+        """
         # DBSCAN聚类参数（仅用于M-detector点云）
         self.dbscan_eps = rospy.get_param('~mdetector_dbscan_eps', 0.8)
         self.dbscan_min_samples = rospy.get_param('~mdetector_dbscan_min_samples', 5)
+        
+        # 动捕ID到Z轴高度的映射
+        self.mocap_id_height_map = mocap_id_height_map if mocap_id_height_map is not None else {}
         
         rospy.loginfo(f"DetectionAdapter initialized")
         rospy.loginfo(f"  M-detector: DBSCAN eps={self.dbscan_eps}, min_samples={self.dbscan_min_samples}")
         rospy.loginfo(f"  FAPP: ObjectsStates with position/velocity/size")
         rospy.loginfo(f"  LV-DOT/LDOT: MarkerArray with bbox position/size")
+        if self.mocap_id_height_map:
+            rospy.loginfo(f"  Mocap: ID-to-height mapping enabled with {len(self.mocap_id_height_map)} entries")
         
     def parse_mdetector(self, pointcloud_msg):
         """
@@ -217,6 +227,69 @@ class DetectionAdapter:
                 bbox_size=bbox_size,
                 timestamp=marker.header.stamp.to_sec() if marker.header.stamp.to_sec() > 0 else rospy.Time.now().to_sec(),
                 point_cloud=None  # 有独立位置，不需要点云
+            )
+            detections.append(detection)
+        
+        return detections
+
+
+    def parse_mocap(self, pose_array_msg, object_classes=None):
+        """
+        解析动捕系统的PoseArray输出
+        动捕只提供XY平面位置，Z轴高度从参数文件的ID映射获取
+        
+        Args:
+            pose_array_msg: geometry_msgs/PoseArray，每个pose对应一个动态物体
+            object_classes: list of str，与poses对应的物体类别名称列表（如['car', 'person', 'drone']）
+                           如果为None，则假设所有物体使用同一类别
+        Returns:
+            list of StandardDetection
+        """
+        if pose_array_msg is None:
+            return []
+        
+        detections = []
+        
+        for i, pose in enumerate(pose_array_msg.poses):
+            # 从动捕获取XY位置
+            x = pose.position.x
+            y = pose.position.y
+            
+            # 根据物体类别从映射获取Z轴高度
+            if object_classes and i < len(object_classes):
+                obj_class = object_classes[i]
+                z = self.mocap_id_height_map.get(obj_class, 0.0)
+            else:
+                # 如果没有类别信息，使用第一个映射值或默认值
+                z = next(iter(self.mocap_id_height_map.values())) if self.mocap_id_height_map else 0.0
+            
+            position = np.array([x, y, z])
+            
+            # 动捕不提供速度信息
+            velocity = np.array([0.0, 0.0, 0.0])
+            
+            # 根据物体类别设置默认尺寸
+            if object_classes and i < len(object_classes):
+                obj_class = object_classes[i]
+                # 根据类别设置默认尺寸
+                if 'car' in obj_class.lower():
+                    bbox_size = np.array([2.5, 1.0, 0.8])  # 车辆
+                elif 'person' in obj_class.lower() or 'human' in obj_class.lower():
+                    bbox_size = np.array([0.5, 0.5, 1.8])  # 人
+                elif 'drone' in obj_class.lower() or 'uav' in obj_class.lower():
+                    bbox_size = np.array([0.6, 0.6, 0.5])  # 无人机
+                else:
+                    bbox_size = np.array([0.5, 0.5, 1.5])  # 默认
+            else:
+                bbox_size = np.array([0.5, 0.5, 1.5])  # 默认尺寸
+            
+            detection = StandardDetection(
+                obj_id=i,
+                position=position,
+                velocity=velocity,
+                bbox_size=bbox_size,
+                timestamp=pose_array_msg.header.stamp.to_sec() if pose_array_msg.header.stamp.to_sec() > 0 else rospy.Time.now().to_sec(),
+                point_cloud=None  # 动捕只有位置，无点云
             )
             detections.append(detection)
         

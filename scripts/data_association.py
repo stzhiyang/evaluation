@@ -13,14 +13,16 @@ from scipy.spatial.distance import cdist
 class DataAssociator:
     """数据关联器"""
     
-    def __init__(self, distance_threshold=2.0, iou_threshold=0.1):
+    def __init__(self, distance_threshold=2.0, iou_threshold=0.1, mocap_mode=False):
         """
         Args:
             distance_threshold: 最大匹配距离(米) - 用于有位置输出的算法
-            iou_threshold: 最小3D边界框IOU阈值 - 用于所有算法
+            iou_threshold: 最小3D边界框IOU阈值 - 用于Gazebo模式
+            mocap_mode: 动捕模式，为True时只使用XY平面距离进行关联，不使用IOU
         """
         self.distance_threshold = distance_threshold
         self.iou_threshold = iou_threshold
+        self.mocap_mode = mocap_mode
     
     def associate(self, ground_truth_list, detection_list):
         """
@@ -75,9 +77,12 @@ class DataAssociator:
     def _build_cost_matrix(self, ground_truth_list, detection_list):
         """
         构建代价矩阵
-        使用双重匹配条件：
-        1. 3D边界框IOU >= iou_threshold （所有算法必须满足）
-        2. 欧氏距离 < distance_threshold （所有算法都满足，因为位置可从点云质心计算）
+        匹配条件：
+        - Gazebo模式：
+          1. 3D边界框IOU >= iou_threshold
+          2. 3D欧氏距离 < distance_threshold
+        - 动捕模式：
+          只使用XY平面距离 < distance_threshold（不使用IOU）
         
         边界框从点云计算：
         - position: 点云质心
@@ -89,29 +94,44 @@ class DataAssociator:
         
         for i, gt in enumerate(ground_truth_list):
             for j, det in enumerate(detection_list):
-                # 计算3D边界框IOU（所有算法都需要满足）
-                iou = self._compute_bbox_iou(gt, det)
-                
-                # 计算欧氏距离（所有算法都需要满足）
+                # 计算距离（动捕模式使用XY距离，Gazebo模式使用3D距离）
                 distance = self._compute_distance(gt, det)
                 
-                # 双重条件判断
-                if iou >= self.iou_threshold and distance < self.distance_threshold:
-                    # 代价：距离和(1-IOU)的加权组合
-                    cost_matrix[i, j] = distance + (1.0 - iou) * 2.0
+                if self.mocap_mode:
+                    # 动捕模式：只使用距离判断
+                    if distance < self.distance_threshold:
+                        cost_matrix[i, j] = distance
+                    else:
+                        cost_matrix[i, j] = 1e6
                 else:
-                    # 无效匹配设置为大值
-                    cost_matrix[i, j] = 1e6
+                    # Gazebo模式：距离+IOU双重条件
+                    iou = self._compute_bbox_iou(gt, det)
+                    if iou >= self.iou_threshold and distance < self.distance_threshold:
+                        # 代价：距离和(1-IOU)的加权组合
+                        cost_matrix[i, j] = distance + (1.0 - iou) * 2.0
+                    else:
+                        # 无效匹配设置为大值
+                        cost_matrix[i, j] = 1e6
         
         return cost_matrix
     
     def _compute_distance(self, obj1, obj2):
-        """计算两个物体中心的欧氏距离"""
-        return np.linalg.norm(obj1.position - obj2.position)
+        """
+        计算两个物体中心的欧氏距离
+        动捕模式下只计算XY平面距离，忽略Z轴
+        """
+        if self.mocap_mode:
+            # 动捕模式：只使用XY平面距离
+            xy_diff = obj1.position[:2] - obj2.position[:2]
+            return np.linalg.norm(xy_diff)
+        else:
+            # 正常模式：使用3D欧氏距离
+            return np.linalg.norm(obj1.position - obj2.position)
     
     def _compute_bbox_iou(self, obj1, obj2):
         """
-        计算两个边界框的3D IOU
+        计算两个边界框的3D IOU（仅用于Gazebo模式）
+        动捕模式不使用此函数
         
         Args:
             obj1, obj2: StandardDetection对象，包含position和bbox_size属性

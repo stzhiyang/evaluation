@@ -14,6 +14,17 @@ iou_threshold: 0.1           # 3D边界框IOU阈值 - 所有算法
 # 更新频率
 update_freq: 10.0            # 评估更新频率(Hz)
 
+# 可视化模式
+visualization_mode: "immediate"  # immediate: 接收到数据立即可视化（推荐，同步性更好）
+                                 # timer: 在定时器中可视化（可能存在延迟）
+
+# 时间戳模式
+timestamp_mode: "original"       # original: 使用消息原始时间戳（推荐，保留时序准确性，可看出算法延迟）
+                                 # now: 使用实时时间戳（所有marker强制显示在当前位置）
+
+# 调试选项
+debug_timestamps: false          # true: 打印时间戳差异调试信息
+
 # 评估控制参数（用于多次实验对比）
 max_frames: 300              # 最大评估帧数，0表示无限制
                              # 每次实验使用相同帧数，确保对比公平

@@ -2,7 +2,7 @@
 <launch>
     <!-- 评估器参数 -->
     <arg name="config_file" default="$(find evaluation)/config/eval_config.yaml"/>
-    <arg name="rviz" default="true"/> 
+    <arg name="rviz" default="false"/> 
     
     <!-- 加载配置 -->
     <rosparam command="load" file="$(arg config_file)" ns="multi_algorithm_evaluator"/>
@@ -11,7 +11,8 @@
     <node name="multi_algorithm_evaluator" 
           pkg="evaluation" 
           type="multi_algo_evaluator.py" 
-          output="screen">
+          output="screen"
+          required="true">
     </node>
     
     <!-- RViz可视化 (可选,默认关闭避免冲突) -->

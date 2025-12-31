@@ -2,11 +2,11 @@
 # 用于测量单个算法启动前后的CPU和内存消耗
 
 # 算法名称（用于显示和文件命名）"M-detector","LVDOT","LDOT","FAPP"
-algorithm_name: "LVDOT"
+algorithm_name: "LDOT"
 
 # ROS节点名称（用于检查节点是否运行）
 # dynfilter,detector_node,ldot_detector_node,mapping_node
-node_name: "detector_node"
+node_name: "ldot_detector_node"
 
 # 监控频率 (Hz)
 # 建议: 1-5 Hz，太高会影响系统性能
@@ -26,6 +26,6 @@ running_duration: 60.0
 # 相对于 evaluation 包的路径
 # 每次运行会自动创建带时间戳和算法名称的子文件夹
 # 例如: results/performance_M_detector_20231216_143025/
-output_dir: "results/"
+output_dir: "results/performance_eval"
 
 

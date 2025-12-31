@@ -13,7 +13,7 @@ from collections import deque, defaultdict
 from sensor_msgs.msg import PointCloud2
 from visualization_msgs.msg import MarkerArray, Marker
 from gazebo_msgs.msg import ModelStates
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PoseArray
 from std_msgs.msg import ColorRGBA
 import sys
 import os
@@ -40,10 +40,11 @@ class MultiAlgorithmEvaluator:
         self.load_parameters()
         
         # 初始化模块
-        self.adapter = DetectionAdapter()
+        self.adapter = DetectionAdapter(mocap_id_height_map=self.mocap_id_height_map)
         self.associator = DataAssociator(
             distance_threshold=self.distance_threshold,
-            iou_threshold=self.iou_threshold
+            iou_threshold=self.iou_threshold,
+            mocap_mode=self.mocap_mode
         )
         
         # 为每个算法创建计算器
@@ -90,13 +91,21 @@ class MultiAlgorithmEvaluator:
         self.start_time = rospy.Time.now()
         
         rospy.loginfo("Multi-Algorithm Evaluator initialized")
+        rospy.loginfo(f"Ground truth source: {self.gt_source}")
+        if self.gt_source == 'mocap':
+            rospy.loginfo(f"Mocap mode enabled: XY plane distance matching only (no IOU)")
+            rospy.loginfo(f"Mocap ID-height mapping: {self.mocap_id_height_map}")
+            rospy.loginfo(f"Mocap object classes: {self.mocap_object_classes}")
         rospy.loginfo(f"Algorithms: M-detector, FAPP, LV-DOT, LDOT")
         rospy.loginfo(f"Update frequency: {self.update_freq} Hz")
         rospy.loginfo(f"Visualization mode: {self.visualization_mode}")
         rospy.loginfo(f"Timestamp mode: {self.timestamp_mode}")
-        rospy.loginfo(f"Matching criteria (both must be satisfied):")
-        rospy.loginfo(f"  - 3D Bounding Box IOU >= {self.iou_threshold}")
-        rospy.loginfo(f"  - Euclidean distance < {self.distance_threshold}m")
+        rospy.loginfo(f"Matching criteria:")
+        if self.mocap_mode:
+            rospy.loginfo(f"  - XY plane distance < {self.distance_threshold}m (mocap mode, no IOU)")
+        else:
+            rospy.loginfo(f"  - 3D Bounding Box IOU >= {self.iou_threshold} AND")
+            rospy.loginfo(f"  - Euclidean distance < {self.distance_threshold}m")
         rospy.loginfo(f"  - Position: point cloud centroid (all algorithms)")
         rospy.loginfo(f"  - Bbox size: from point cloud min/max bounds")
         rospy.loginfo(f"Evaluation metrics explanation:")
@@ -113,6 +122,17 @@ class MultiAlgorithmEvaluator:
         # 匹配阈值
         self.distance_threshold = rospy.get_param('~distance_threshold', 2.0)  # 欧氏距离阈值
         self.iou_threshold = rospy.get_param('~iou_threshold', 0.1)  # 点云IOU阈值
+        
+        # 动捕模式：True时只使用XY平面距离关联，忽略Z轴
+        self.mocap_mode = rospy.get_param('~mocap_mode', False)
+        
+        # 动捕ID到Z轴高度的映射（仅在mocap_mode=True时使用）
+        # 格式：{'car': 0.5, 'person': 1.0, 'drone': 1.5}
+        self.mocap_id_height_map = rospy.get_param('~mocap_id_height_map', {})
+        
+        # 动捕物体类别列表（与动捕消息中的poses顺序对应）
+        # 例如：['car', 'person', 'drone']
+        self.mocap_object_classes = rospy.get_param('~mocap_object_classes', [])
         
         # 更新频率
         self.update_freq = rospy.get_param('~update_freq', 10.0)
@@ -136,15 +156,16 @@ class MultiAlgorithmEvaluator:
         
         # 如果是相对路径，转换为相对于evaluation包根目录的绝对路径
         if not os.path.isabs(base_output_dir):
-            # 获取evaluation包的根目录（scripts的上级目录）
-            package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            base_output_dir = os.path.join(package_root, base_output_dir)
+        # 话题名称
+        self.gt_topic = rospy.get_param('~ground_truth_topic', '/gazebo/model_states')
+        self.gt_source = rospy.get_param('~ground_truth_source', 'gazebo')  # 'gazebo' 或 'mocap'
+        self.mdetector_topic = rospy.get_param('~mdetector_topic', '/dynamic_points')
+        self.fapp_topic = rospy.get_param('~fapp_topic', '/states')
+        self.lvdot_topic = rospy.get_param('~lvdot_topic', '/onboard_detector/dynamic_bboxes')
+        self.ldot_topic = rospy.get_param('~ldot_topic', '/ldot_detector/dynamic_point_cloud')
         
-        # 创建带时间戳的子文件夹和文件名前缀
-        self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.output_dir = os.path.join(base_output_dir, f'eval_{self.timestamp}')
-        
-        if not os.path.exists(self.output_dir):
+        # Gazebo动态物体过滤关键词（仅当gt_source='gazebo'时使用）
+        self.dynamic_keywords = rospy.get_param('~dynamic_keywords', ['actor', 'dynamic', 'person', 'obstacle'])
             os.makedirs(self.output_dir)
         
         # 话题名称
@@ -162,8 +183,13 @@ class MultiAlgorithmEvaluator:
     
     def setup_subscribers(self):
         """设置订阅器"""
-        # 真值
-        self.gt_sub = rospy.Subscriber(self.gt_topic, ModelStates, self.gt_callback, queue_size=10)
+        # 真值订阅 - 根据gt_source选择不同的消息类型
+        if self.gt_source == 'mocap':
+            rospy.loginfo(f"Using Mocap ground truth from: {self.gt_topic}")
+            self.gt_sub = rospy.Subscriber(self.gt_topic, PoseArray, self.mocap_gt_callback, queue_size=10)
+        else:  # gazebo
+            rospy.loginfo(f"Using Gazebo ground truth from: {self.gt_topic}")
+            self.gt_sub = rospy.Subscriber(self.gt_topic, ModelStates, self.gt_callback, queue_size=10)
         
         # M-detector: 动态点云
         self.mdetector_sub = rospy.Subscriber(self.mdetector_topic, PointCloud2, 
@@ -249,6 +275,18 @@ class MultiAlgorithmEvaluator:
         self.gt_buffer.append(detections)
         
         # 在 immediate 模式下立即可视化真值，保持与检测结果同步
+        if self.visualization_mode == 'immediate':
+            self.visualize_ground_truth(detections)
+    
+    def mocap_gt_callback(self, msg):
+        """动捕真值回调"""
+        # 使用adapter解析动捕数据
+        detections = self.adapter.parse_mocap(msg, self.mocap_object_classes)
+        
+        self.current_gt = detections
+        self.gt_buffer.append(detections)
+        
+        # 在 immediate 模式下立即可视化真值
         if self.visualization_mode == 'immediate':
             self.visualize_ground_truth()
     

@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 动捕评估器参数 -->
+    <arg name="config_file" default="$(find evaluation)/config/eval_config_mocap.yaml"/>
+    <arg name="rviz" default="false"/> 
+    
+    <!-- 加载配置 -->
+    <rosparam command="load" file="$(arg config_file)" ns="multi_algorithm_evaluator"/>
+    
+    <!-- 多算法评估节点 (动捕模式) -->
+    <node name="multi_algorithm_evaluator" 
+          pkg="evaluation" 
+          type="multi_algo_evaluator.py" 
+          output="screen"
+          required="true">
+        <!-- 动捕模式的额外说明 -->
+        <!-- 
+            动捕模式特点：
+            1. 真值来源：动捕系统PoseArray消息
+            2. 关联方式：只使用XY平面距离，忽略Z轴
+            3. Z轴高度：从配置文件的ID映射中获取
+            4. 支持类别：车、人、无人机
+        -->
+    </node>
+    
+    <!-- RViz可视化 (可选,默认关闭) -->
+    <node name="rviz_evaluation" 
+          pkg="rviz" 
+          type="rviz" 
+          args="-d $(find evaluation)/rviz/evaluation.rviz"
+          if="$(arg rviz)"/>
+</launch>
