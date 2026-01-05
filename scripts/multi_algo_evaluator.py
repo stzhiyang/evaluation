@@ -78,11 +78,11 @@ class MultiAlgorithmEvaluator:
         # 节点关闭标志
         self.is_shutdown = False
         
-        # 订阅器
-        self.setup_subscribers()
-        
-        # 发布器
+        # 发布器 - 必须在订阅器之前创建，避免回调中使用未初始化的发布器
         self.setup_publishers()
+        
+        # 订阅器 - 创建后会立即开始接收消息
+        self.setup_subscribers()
         
         # 定时器
         self.eval_timer = rospy.Timer(rospy.Duration(1.0 / self.update_freq), self.evaluate_callback)
@@ -106,6 +106,7 @@ class MultiAlgorithmEvaluator:
         else:
             rospy.loginfo(f"  - 3D Bounding Box IOU >= {self.iou_threshold} AND")
             rospy.loginfo(f"  - Euclidean distance < {self.distance_threshold}m")
+        rospy.loginfo(f"  - Timestamp tolerance: {self.timestamp_tolerance*1000:.0f}ms (nearest neighbor matching)")
         rospy.loginfo(f"  - Position: point cloud centroid (all algorithms)")
         rospy.loginfo(f"  - Bbox size: from point cloud min/max bounds")
         rospy.loginfo(f"Evaluation metrics explanation:")
@@ -120,7 +121,7 @@ class MultiAlgorithmEvaluator:
     def load_parameters(self):
         """加载参数"""
         # 匹配阈值
-        self.distance_threshold = rospy.get_param('~distance_threshold', 2.0)  # 欧氏距离阈值
+        self.distance_threshold = rospy.get_param('~distance_threshold', 1.0)  # 欧氏距离阈值
         self.iou_threshold = rospy.get_param('~iou_threshold', 0.1)  # 点云IOU阈值
         
         # 动捕模式：True时只使用XY平面距离关联，忽略Z轴
@@ -137,6 +138,10 @@ class MultiAlgorithmEvaluator:
         # 更新频率
         self.update_freq = rospy.get_param('~update_freq', 10.0)
         
+        # 时间戳同步容差（秒）- 检测结果和真值的时间戳差异超过此值则不进行匹配
+        # 对于10Hz点云，建议设置为 0.15（150ms，略大于一帧间隔100ms）
+        self.timestamp_tolerance = rospy.get_param('~timestamp_tolerance', 0.15)
+        
         # 可视化模式：'immediate' 在接收到数据时立即可视化（推荐），'timer' 在定时器中可视化
         self.visualization_mode = rospy.get_param('~visualization_mode', 'immediate')
         
@@ -150,12 +155,22 @@ class MultiAlgorithmEvaluator:
         self.max_frames = rospy.get_param('~max_frames', 0)  # 最大评估帧数，0表示无限制
         self.frame_count = 0  # 当前已评估帧数
         
-        # 输出目录 - 修改为自动创建带时间戳的子文件夹
+        # 输出目录 - 创建带时间戳的子文件夹
         base_output_dir = rospy.get_param('~output_dir', 
-                                         os.path.join(os.path.dirname(__file__), '../results'))
+                                         os.path.join(os.path.dirname(__file__), '../results/algorithm_eval'))
         
         # 如果是相对路径，转换为相对于evaluation包根目录的绝对路径
         if not os.path.isabs(base_output_dir):
+            base_output_dir = os.path.join(os.path.dirname(__file__), '..', base_output_dir)
+        
+        # 生成时间戳
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 创建带eval_前缀的时间戳子文件夹
+        self.output_dir = os.path.join(base_output_dir, f"eval_{self.timestamp}")
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+        
         # 话题名称
         self.gt_topic = rospy.get_param('~ground_truth_topic', '/gazebo/model_states')
         self.gt_source = rospy.get_param('~ground_truth_source', 'gazebo')  # 'gazebo' 或 'mocap'
@@ -166,20 +181,9 @@ class MultiAlgorithmEvaluator:
         
         # Gazebo动态物体过滤关键词（仅当gt_source='gazebo'时使用）
         self.dynamic_keywords = rospy.get_param('~dynamic_keywords', ['actor', 'dynamic', 'person', 'obstacle'])
-            os.makedirs(self.output_dir)
-        
-        # 话题名称
-        self.gt_topic = rospy.get_param('~ground_truth_topic', '/gazebo/model_states')
-        self.mdetector_topic = rospy.get_param('~mdetector_topic', '/dynamic_points')
-        self.fapp_topic = rospy.get_param('~fapp_topic', '/states')
-        self.lvdot_topic = rospy.get_param('~lvdot_topic', '/onboard_detector/dynamic_bboxes')
-        self.ldot_topic = rospy.get_param('~ldot_topic', '/ldot_detector/dynamic_point_cloud')
-        
-        # Gazebo动态物体过滤关键词
-        self.dynamic_keywords = rospy.get_param('~dynamic_keywords', ['actor', 'dynamic', 'person', 'obstacle'])
         
         # 物体尺寸估计(根据Gazebo模型类型)
-        self.default_bbox_size = rospy.get_param('~default_bbox_size', [0.5, 0.5, 1.5])
+        self.default_bbox_size = rospy.get_param('~default_bbox_size', [0.5, 0.5, 1.8])
     
     def setup_subscribers(self):
         """设置订阅器"""
@@ -276,7 +280,7 @@ class MultiAlgorithmEvaluator:
         
         # 在 immediate 模式下立即可视化真值，保持与检测结果同步
         if self.visualization_mode == 'immediate':
-            self.visualize_ground_truth(detections)
+            self.visualize_ground_truth()
     
     def mocap_gt_callback(self, msg):
         """动捕真值回调"""
@@ -334,20 +338,50 @@ class MultiAlgorithmEvaluator:
         if self.visualization_mode == 'immediate':
             self.visualize_detections('LDOT', detections, [])
     
+    def find_nearest_gt(self, detection_timestamp):
+        """
+        根据检测结果的时间戳，在真值缓冲区中找到时间最接近的真值帧
+        
+        Args:
+            detection_timestamp: 检测结果的时间戳（秒）
+        Returns:
+            (best_gt, min_time_diff): 最接近的真值列表和时间差（秒）
+            如果缓冲区为空或超过容差则返回 (None, None)
+        """
+        if len(self.gt_buffer) == 0:
+            return None, None
+        
+        best_gt = None
+        min_time_diff = float('inf')
+        
+        for gt_list in self.gt_buffer:
+            if len(gt_list) == 0:
+                continue
+            
+            gt_timestamp = gt_list[0].timestamp
+            time_diff = abs(gt_timestamp - detection_timestamp)
+            
+            if time_diff < min_time_diff:
+                min_time_diff = time_diff
+                best_gt = gt_list
+        
+        # 如果时间差超过阈值，认为没有有效匹配
+        if min_time_diff > self.timestamp_tolerance:
+            if self.debug_timestamps:
+                rospy.logwarn_throttle(2.0, f"No GT within tolerance: min_diff={min_time_diff*1000:.1f}ms > {self.timestamp_tolerance*1000:.1f}ms")
+            return None, min_time_diff
+        
+        return best_gt, min_time_diff
+    
     def evaluate_callback(self, event):
         """评估定时回调"""
-        if len(self.current_gt) == 0:
-            return
-        
-        # 检查是否达到评估限制
-        if self.should_stop_evaluation():
-            self.is_shutdown = True  # 设置关闭标志
-            rospy.loginfo("Evaluation limit reached. Stopping...")
-            self.save_results()
-            rospy.signal_shutdown("Evaluation completed")
+        if len(self.gt_buffer) == 0:
             return
         
         current_time = rospy.Time.now().to_sec()
+        
+        # 收集所有算法的时间同步信息
+        sync_info = {}
         
         # 评估每个算法
         for algo_name in ['M-detector', 'FAPP', 'LV-DOT', 'LDOT']:
@@ -357,16 +391,30 @@ class MultiAlgorithmEvaluator:
             # 获取最新检测结果
             detections = self.detection_buffers[algo_name][-1]
             
-            # 调试：打印时间戳差异
-            if self.debug_timestamps and len(detections) > 0 and len(self.current_gt) > 0:
-                gt_time = self.current_gt[0].timestamp
-                det_time = detections[0].timestamp
-                delay_ms = (gt_time - det_time) * 1000
-                rospy.loginfo_throttle(2.0, f"{algo_name} timestamp delay: {delay_ms:.1f} ms (GT: {gt_time:.3f}, Det: {det_time:.3f})")
+            if len(detections) == 0:
+                continue
             
-            # 数据关联
+            # 根据检测结果的时间戳找到最接近的真值帧
+            detection_timestamp = detections[0].timestamp
+            matched_gt, time_diff = self.find_nearest_gt(detection_timestamp)
+            
+            if matched_gt is None:
+                # 没有找到时间匹配的真值，跳过本次评估
+                sync_info[algo_name] = "NO_GT"
+                continue
+            
+            # 记录时间同步信息
+            sync_info[algo_name] = f"{time_diff*1000:.1f}ms"
+            
+            # 详细调试信息（需要启用 debug_timestamps）
+            if self.debug_timestamps and len(matched_gt) > 0:
+                gt_time = matched_gt[0].timestamp
+                det_time = detection_timestamp
+                rospy.loginfo(f"{algo_name} timestamps: GT={gt_time:.3f}, Det={det_time:.3f}, diff={time_diff*1000:.1f}ms")
+            
+            # 数据关联 - 使用时间对齐后的真值
             matches, unmatched_gt, unmatched_det = self.associator.associate(
-                self.current_gt, detections
+                matched_gt, detections
             )
             
             # 计算指标
@@ -382,8 +430,21 @@ class MultiAlgorithmEvaluator:
             if self.visualization_mode == 'timer':
                 self.visualize_detections(algo_name, detections, matches)
         
+        # 打印所有算法的时间同步状态（每5秒一次）
+        if len(sync_info) > 0:
+            sync_str = " | ".join([f"{k}:{v}" for k, v in sync_info.items()])
+            rospy.loginfo_throttle(5.0, f"[Time Sync] {sync_str}")
+        
         # 增加帧计数
         self.frame_count += 1
+        
+        # 检查是否达到评估限制（在评估完当前帧之后）
+        if self.should_stop_evaluation():
+            rospy.loginfo("Evaluation limit reached. Stopping...")
+            self.save_results()
+            self.is_shutdown = True  # 设置关闭标志
+            rospy.signal_shutdown("Evaluation completed")
+            return
         
         # 在 timer 模式下可视化真值和指标
         if self.visualization_mode == 'timer':
@@ -682,7 +743,8 @@ class MultiAlgorithmEvaluator:
         except KeyboardInterrupt:
             rospy.loginfo("Shutting down...")
         finally:
-            self.save_results()
+            if not self.is_shutdown:
+                self.save_results()
 
 
 if __name__ == '__main__':

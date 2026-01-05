@@ -1,7 +1,7 @@
 # 评估器配置文件
 
 # 数据关联参数 - 双重匹配条件
-distance_threshold: 2.0      # 欧氏距离阈值(米) - 所有算法
+distance_threshold: 1.0      # 欧氏距离阈值(米) - 所有算法
 iou_threshold: 0.1           # 3D边界框IOU阈值 - 所有算法
                              # 匹配条件（必须同时满足）：
                              # 1. 3D边界框IOU >= iou_threshold
@@ -14,6 +14,12 @@ iou_threshold: 0.1           # 3D边界框IOU阈值 - 所有算法
 # 更新频率
 update_freq: 10.0            # 评估更新频率(Hz)
 
+# 时间戳同步参数
+timestamp_tolerance: 0.2    # 时间戳同步容差（秒）
+                             # 检测结果会在真值缓冲区中找时间戳最接近的帧进行匹配
+                             # 对于10Hz点云（帧间隔100ms），建议设置为0.15（150ms）
+                             # 超过此容差的检测结果将被跳过，不参与评估
+
 # 可视化模式
 visualization_mode: "immediate"  # immediate: 接收到数据立即可视化（推荐，同步性更好）
                                  # timer: 在定时器中可视化（可能存在延迟）
@@ -23,7 +29,7 @@ timestamp_mode: "original"       # original: 使用消息原始时间戳（推�
                                  # now: 使用实时时间戳（所有marker强制显示在当前位置）
 
 # 调试选项
-debug_timestamps: false          # true: 打印时间戳差异调试信息
+debug_timestamps: true          # true: 打印时间戳差异调试信息
 
 # 评估控制参数（用于多次实验对比）
 max_frames: 300              # 最大评估帧数，0表示无限制
@@ -35,7 +41,7 @@ output_dir: "results/algorithm_eval"        # 相对于evaluation包的路径
 
 # 话题配置
 ground_truth_topic: "/gazebo/model_states"
-mdetector_topic: "/m_detector/point_out"                    # M-detector动态点云 (PointCloud2)
+mdetector_topic: "/m_detector/frame_out"                    # M-detector动态点云 (PointCloud2)
 fapp_topic: "/states"                                       # FAPP动态物体状态 (ObjectsStates: position+velocity+size)
 lvdot_topic: "/onboard_detector/dynamic_bboxes"             # LV-DOT动态边界框 (MarkerArray: position+size)
 ldot_topic: "/ldot_detector/dynamic_bboxes"                 # LDOT动态边界框 (MarkerArray: position+size)
