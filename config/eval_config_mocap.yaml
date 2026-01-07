@@ -2,35 +2,26 @@
 
 # 真值数据源
 ground_truth_source: "mocap"  # "gazebo" 或 "mocap"
-ground_truth_topic: "/vrpn_client_node/poses"  # 动捕真值话题
+ground_truth_topic: "/vrpn_client_node"  # 动捕真值话题基础路径（自动发现子话题）
 
 # 动捕模式配置
-mocap_mode: true  # 启用动捕模式：只使用XY平面距离进行关联，忽略Z轴
+mocap_mode: true  # 启用动捕模式：使用3D欧氏距离进行关联，不使用IOU
 
 # 动捕ID到Z轴高度的映射
 # 根据实际动捕环境中物体的高度设置
 # 键：物体类别名称，值：中心点Z轴高度（米）
 mocap_id_height_map:
   car: 0.5        # 车辆中心高度
-  person: 0.85     # 人体中心高度
-  drone: 1.5      # 无人机中心高度
+  person: 0.9     # 人体中心高度
+  uav: 1.5      # 无人机中心高度
 
-# 动捕物体类别列表（与动捕消息中的poses顺序对应）
-# 例如：如果动捕系统发布3个物体，按顺序为车、人、无人机
-# 注意：这个列表的顺序必须与动捕系统发布的PoseArray中poses的顺序一致
-mocap_object_classes: ['car', 'person', 'drone']
+# 动捕物体类别列表（用于提供默认类别映射，实际类别从话题名称提取）
+mocap_object_classes: ['car', 'person', 'uav']
 
 # 数据关联参数
-distance_threshold: 2.0      # XY平面距离阈值(米)
+distance_threshold: 1.0      # XY平面距离阈值(米)
 iou_threshold: 0.1           # IOU阈值（动捕模式不使用此参数）
-                             # 动捕模式匹配条件：
-                             # - 只使用XY平面距离 < distance_threshold
-                             # - 不使用IOU条件（因为动捕只提供位置）
-                             # 
-                             # Gazebo模式匹配条件（必须同时满足）：
-                             # - 3D边界框IOU >= iou_threshold
-                             # - 3D欧氏距离 < distance_threshold
-
+                             
 # 更新频率
 update_freq: 10.0            # 评估更新频率(Hz)
 
@@ -43,7 +34,7 @@ timestamp_mode: "original"       # original: 使用消息原始时间戳（推�
                                  # now: 使用实时时间戳
 
 # 调试选项
-debug_timestamps: false
+debug_timestamps: true
 
 # 评估控制参数
 max_frames: 300              # 最大评估帧数，0表示无限制
@@ -52,7 +43,7 @@ max_frames: 300              # 最大评估帧数，0表示无限制
 output_dir: "results/algorithm_eval"
 
 # 算法话题配置
-mdetector_topic: "/m_detector/point_out"
+mdetector_topic: "/m_detector/frame_out"
 fapp_topic: "/states"
 lvdot_topic: "/onboard_detector/dynamic_bboxes"
 ldot_topic: "/ldot_detector/dynamic_bboxes"
@@ -64,5 +55,5 @@ ldot_topic: "/ldot_detector/dynamic_bboxes"
 default_bbox_size: [0.5, 0.5, 1.8]
 
 # 评估系统 DBSCAN 聚类参数
-mdetector_dbscan_eps: 0.8
-mdetector_dbscan_min_samples: 5
+mdetector_dbscan_eps: 0.5
+mdetector_dbscan_min_samples: 10

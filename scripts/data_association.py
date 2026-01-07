@@ -117,16 +117,11 @@ class DataAssociator:
     
     def _compute_distance(self, obj1, obj2):
         """
-        计算两个物体中心的欧氏距离
-        动捕模式下只计算XY平面距离，忽略Z轴
+        计算两个物体中心的3D欧氏距离
+        动捕模式和Gazebo模式都使用完整的3D距离
         """
-        if self.mocap_mode:
-            # 动捕模式：只使用XY平面距离
-            xy_diff = obj1.position[:2] - obj2.position[:2]
-            return np.linalg.norm(xy_diff)
-        else:
-            # 正常模式：使用3D欧氏距离
-            return np.linalg.norm(obj1.position - obj2.position)
+        # 统一使用3D欧氏距离
+        return np.linalg.norm(obj1.position - obj2.position)
     
     def _compute_bbox_iou(self, obj1, obj2):
         """

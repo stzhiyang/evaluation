@@ -295,6 +295,62 @@ class DetectionAdapter:
         
         return detections
 
+    def parse_mocap_multi(self, mocap_poses_dict, object_types_dict, id_height_map):
+        """
+        解析多物体动捕系统的PoseStamped输出
+        每个物体有独立的PoseStamped消息，从话题名称提取物体类型
+        
+        Args:
+            mocap_poses_dict: dict of {object_id: PoseStamped}，每个物体的姿态
+            object_types_dict: dict of {object_id: object_type}，从话题名称提取的物体类型
+            id_height_map: dict of {object_type: height}，物体类型到Z轴高度的映射
+        Returns:
+            list of StandardDetection
+        """
+        if not mocap_poses_dict:
+            return []
+        
+        detections = []
+        
+        for obj_id, pose_stamped in mocap_poses_dict.items():
+            # 获取物体类型
+            obj_type = object_types_dict.get(obj_id, 'unknown')
+            
+            # 从动捕获取XY位置
+            x = pose_stamped.pose.position.x
+            y = pose_stamped.pose.position.y
+            
+            # 根据物体类型从映射获取Z轴高度
+            z = id_height_map.get(obj_type, 0.0)
+            
+            position = np.array([x, y, z])
+            
+            # 动捕不提供速度信息
+            velocity = np.array([0.0, 0.0, 0.0])
+            
+            # 根据物体类型设置默认尺寸
+            obj_type_lower = obj_type.lower()
+            if 'car' in obj_type_lower or 'vehicle' in obj_type_lower:
+                bbox_size = np.array([2.5, 1.0, 0.8])  # 车辆
+            elif 'person' in obj_type_lower or 'human' in obj_type_lower:
+                bbox_size = np.array([0.5, 0.5, 1.8])  # 人
+            elif 'drone' in obj_type_lower or 'uav' in obj_type_lower:
+                bbox_size = np.array([0.6, 0.6, 0.5])  # 无人机
+            else:
+                bbox_size = np.array([0.5, 0.5, 1.5])  # 默认
+            
+            detection = StandardDetection(
+                obj_id=hash(obj_id) % 10000,  # 使用hash生成稳定ID
+                position=position,
+                velocity=velocity,
+                bbox_size=bbox_size,
+                timestamp=pose_stamped.header.stamp.to_sec() if pose_stamped.header.stamp.to_sec() > 0 else rospy.Time.now().to_sec(),
+                point_cloud=None  # 动捕只有位置，无点云
+            )
+            detections.append(detection)
+        
+        return detections
+
 
 if __name__ == '__main__':
     # 测试代码

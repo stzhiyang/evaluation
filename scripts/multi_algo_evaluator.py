@@ -13,7 +13,7 @@ from collections import deque, defaultdict
 from sensor_msgs.msg import PointCloud2
 from visualization_msgs.msg import MarkerArray, Marker
 from gazebo_msgs.msg import ModelStates
-from geometry_msgs.msg import Point, PoseArray
+from geometry_msgs.msg import Point, PoseArray, PoseStamped
 from std_msgs.msg import ColorRGBA
 import sys
 import os
@@ -75,6 +75,11 @@ class MultiAlgorithmEvaluator:
         # 当前真值
         self.current_gt = []
         
+        # 多物体动捕模式相关变量
+        self.mocap_subscribers = {}  # 存储动捕订阅器 {topic_name: subscriber}
+        self.mocap_poses = {}  # 存储接收到的动捕姿态 {object_id: PoseStamped}
+        self.mocap_object_types = {}  # 存储物体类型映射 {object_id: object_type}
+        
         # 节点关闭标志
         self.is_shutdown = False
         
@@ -93,7 +98,7 @@ class MultiAlgorithmEvaluator:
         rospy.loginfo("Multi-Algorithm Evaluator initialized")
         rospy.loginfo(f"Ground truth source: {self.gt_source}")
         if self.gt_source == 'mocap':
-            rospy.loginfo(f"Mocap mode enabled: XY plane distance matching only (no IOU)")
+            rospy.loginfo(f"Mocap mode enabled: 3D distance matching (no IOU)")
             rospy.loginfo(f"Mocap ID-height mapping: {self.mocap_id_height_map}")
             rospy.loginfo(f"Mocap object classes: {self.mocap_object_classes}")
         rospy.loginfo(f"Algorithms: M-detector, FAPP, LV-DOT, LDOT")
@@ -102,7 +107,7 @@ class MultiAlgorithmEvaluator:
         rospy.loginfo(f"Timestamp mode: {self.timestamp_mode}")
         rospy.loginfo(f"Matching criteria:")
         if self.mocap_mode:
-            rospy.loginfo(f"  - XY plane distance < {self.distance_threshold}m (mocap mode, no IOU)")
+            rospy.loginfo(f"  - 3D distance < {self.distance_threshold}m (mocap mode, no IOU)")
         else:
             rospy.loginfo(f"  - 3D Bounding Box IOU >= {self.iou_threshold} AND")
             rospy.loginfo(f"  - Euclidean distance < {self.distance_threshold}m")
@@ -131,7 +136,7 @@ class MultiAlgorithmEvaluator:
         # 格式：{'car': 0.5, 'person': 1.0, 'drone': 1.5}
         self.mocap_id_height_map = rospy.get_param('~mocap_id_height_map', {})
         
-        # 动捕物体类别列表（与动捕消息中的poses顺序对应）
+        # 动捕物体类别列表（用于提供默认类别映射，实际类别从话题名称提取）
         # 例如：['car', 'person', 'drone']
         self.mocap_object_classes = rospy.get_param('~mocap_object_classes', [])
         
@@ -185,12 +190,87 @@ class MultiAlgorithmEvaluator:
         # 物体尺寸估计(根据Gazebo模型类型)
         self.default_bbox_size = rospy.get_param('~default_bbox_size', [0.5, 0.5, 1.8])
     
+    def setup_mocap_multi_subscribers(self):
+        """设置多物体动捕模式的订阅器"""
+        rospy.loginfo("Setting up multi-object mocap subscribers...")
+        
+        # 获取所有符合模式的话题
+        import rostopic
+        
+        # 查找所有 /vrpn_client_node/*/pose 话题
+        mocap_topics = []
+        try:
+            # 获取所有话题
+            all_topics = rostopic.get_topic_list()
+            
+            for topic_name, topic_type in all_topics:
+                # 检查是否符合动捕话题模式
+                if (topic_name.startswith(self.gt_topic + '/') and 
+                    topic_name.endswith('/pose') and
+                    topic_type == 'geometry_msgs/PoseStamped'):
+                    mocap_topics.append(topic_name)
+                    
+        except Exception as e:
+            rospy.logerr(f"Failed to discover mocap topics: {e}")
+            return
+        
+        if not mocap_topics:
+            rospy.logwarn(f"No mocap topics found matching pattern {self.gt_topic}/*/pose")
+            return
+        
+        rospy.loginfo(f"Found {len(mocap_topics)} mocap topics:")
+        for topic in mocap_topics:
+            rospy.loginfo(f"  - {topic}")
+            
+            # 从话题名称提取物体ID和类型
+            # 例如：/vrpn_client_node/UAV_3/pose -> object_id="UAV_3", object_type="UAV"
+            topic_parts = topic.split('/')
+            if len(topic_parts) >= 3:
+                object_id = topic_parts[2]  # UAV_3
+                object_type = object_id.split('_')[0] if '_' in object_id else object_id.lower()
+                
+                # 存储物体类型映射
+                self.mocap_object_types[object_id] = object_type
+                
+                # 创建订阅器
+                subscriber = rospy.Subscriber(topic, PoseStamped, 
+                                            lambda msg, oid=object_id: self.mocap_single_pose_callback(msg, oid), 
+                                            queue_size=10)
+                self.mocap_subscribers[topic] = subscriber
+                
+                rospy.loginfo(f"  Subscribed to {topic} -> {object_id} (type: {object_type})")
+        
+        rospy.loginfo(f"Multi-object mocap setup complete. Tracking {len(self.mocap_subscribers)} objects.")
+    
+    def mocap_single_pose_callback(self, pose_stamped, object_id):
+        """单个物体的动捕姿态回调"""
+        if self.is_shutdown:
+            return
+            
+        # 存储接收到的姿态
+        self.mocap_poses[object_id] = pose_stamped
+        
+        # 检查是否所有物体都已更新（基于时间戳）
+        if len(self.mocap_poses) > 0:
+            # 使用adapter解析多个动捕姿态
+            detections = self.adapter.parse_mocap_multi(
+                self.mocap_poses, self.mocap_object_types, self.mocap_id_height_map
+            )
+            
+            self.current_gt = detections
+            self.gt_buffer.append(detections)
+            
+            # 在 immediate 模式下立即可视化真值
+            if self.visualization_mode == 'immediate':
+                self.visualize_ground_truth()
+    
     def setup_subscribers(self):
         """设置订阅器"""
-        # 真值订阅 - 根据gt_source选择不同的消息类型
+        # 真值订阅 - 动捕模式
         if self.gt_source == 'mocap':
             rospy.loginfo(f"Using Mocap ground truth from: {self.gt_topic}")
-            self.gt_sub = rospy.Subscriber(self.gt_topic, PoseArray, self.mocap_gt_callback, queue_size=10)
+            # 多物体模式：动态发现并订阅多个PoseStamped话题
+            self.setup_mocap_multi_subscribers()
         else:  # gazebo
             rospy.loginfo(f"Using Gazebo ground truth from: {self.gt_topic}")
             self.gt_sub = rospy.Subscriber(self.gt_topic, ModelStates, self.gt_callback, queue_size=10)
@@ -406,12 +486,6 @@ class MultiAlgorithmEvaluator:
             # 记录时间同步信息
             sync_info[algo_name] = f"{time_diff*1000:.1f}ms"
             
-            # 详细调试信息（需要启用 debug_timestamps）
-            if self.debug_timestamps and len(matched_gt) > 0:
-                gt_time = matched_gt[0].timestamp
-                det_time = detection_timestamp
-                rospy.loginfo(f"{algo_name} timestamps: GT={gt_time:.3f}, Det={det_time:.3f}, diff={time_diff*1000:.1f}ms")
-            
             # 数据关联 - 使用时间对齐后的真值
             matches, unmatched_gt, unmatched_det = self.associator.associate(
                 matched_gt, detections
@@ -430,10 +504,10 @@ class MultiAlgorithmEvaluator:
             if self.visualization_mode == 'timer':
                 self.visualize_detections(algo_name, detections, matches)
         
-        # 打印所有算法的时间同步状态（每5秒一次）
+        # 打印所有算法的时间同步状态（每1秒一次），有数据才会打印
         if len(sync_info) > 0:
             sync_str = " | ".join([f"{k}:{v}" for k, v in sync_info.items()])
-            rospy.loginfo_throttle(5.0, f"[Time Sync] {sync_str}")
+            rospy.loginfo_throttle(1.0, f"[Time Sync] {sync_str}")
         
         # 增加帧计数
         self.frame_count += 1
