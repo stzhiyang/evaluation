@@ -56,7 +56,7 @@ class MultiAlgorithmEvaluator:
         }
         
         # 数据缓冲区
-        self.gt_buffer = deque(maxlen=100)
+        self.gt_buffer = deque(maxlen=200)  # 增加到200，约20秒@10Hz
         self.detection_buffers = {
             'M-detector': deque(maxlen=100),
             'FAPP': deque(maxlen=100),
@@ -420,7 +420,7 @@ class MultiAlgorithmEvaluator:
     
     def find_nearest_gt(self, detection_timestamp):
         """
-        根据检测结果的时间戳，在真值缓冲区中找到时间最接近的真值帧
+        根据检测结果的时间戳，在真值缓冲区中找到时间最接近且不晚于检测结果的真值帧
         
         Args:
             detection_timestamp: 检测结果的时间戳（秒）
@@ -434,11 +434,19 @@ class MultiAlgorithmEvaluator:
         best_gt = None
         min_time_diff = float('inf')
         
-        for gt_list in self.gt_buffer:
+        # 创建快照避免并发修改问题
+        gt_buffer_snapshot = list(self.gt_buffer)
+        
+        for gt_list in gt_buffer_snapshot:
             if len(gt_list) == 0:
                 continue
             
             gt_timestamp = gt_list[0].timestamp
+            
+            # 时间顺序约束：真值时间戳不能晚于检测结果时间戳
+            if gt_timestamp > detection_timestamp:
+                continue
+            
             time_diff = abs(gt_timestamp - detection_timestamp)
             
             if time_diff < min_time_diff:

@@ -2,5 +2,4 @@
 results/
 
 # Python 缓存文件
-__pycache__/
-*.pyc
+scripts/__pycache__/
