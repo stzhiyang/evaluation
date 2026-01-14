@@ -2,7 +2,7 @@
 <launch>
     <!-- 动捕评估器参数 -->
     <arg name="config_file" default="$(find evaluation)/config/eval_config_mocap.yaml"/>
-    <arg name="rviz" default="false"/> 
+    <arg name="rviz" default="true"/> 
     
     <!-- 加载配置 -->
     <rosparam command="load" file="$(arg config_file)" ns="multi_algorithm_evaluator"/>

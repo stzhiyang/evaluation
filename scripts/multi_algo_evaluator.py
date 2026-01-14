@@ -111,7 +111,11 @@ class MultiAlgorithmEvaluator:
         else:
             rospy.loginfo(f"  - 3D Bounding Box IOU >= {self.iou_threshold} AND")
             rospy.loginfo(f"  - Euclidean distance < {self.distance_threshold}m")
-        rospy.loginfo(f"  - Timestamp tolerance: {self.timestamp_tolerance*1000:.0f}ms (nearest neighbor matching)")
+        rospy.loginfo(f"  - Timestamp sync mode: {self.timestamp_sync_mode}")
+        if self.timestamp_sync_mode == 'tolerance':
+            rospy.loginfo(f"  - Timestamp tolerance: {self.timestamp_tolerance*1000:.0f}ms (nearest neighbor matching)")
+        else:
+            rospy.loginfo(f"  - Using latest detection and latest ground truth")
         rospy.loginfo(f"  - Position: point cloud centroid (all algorithms)")
         rospy.loginfo(f"  - Bbox size: from point cloud min/max bounds")
         rospy.loginfo(f"Evaluation metrics explanation:")
@@ -139,11 +143,19 @@ class MultiAlgorithmEvaluator:
         # 动捕物体类别列表（用于提供默认类别映射，实际类别从话题名称提取）
         # 例如：['car', 'person', 'drone']
         self.mocap_object_classes = rospy.get_param('~mocap_object_classes', [])
+
+        # 动捕物体ID到类别名称的映射（用于把具体ID归并到配置中的类别名）
+        # 例如：{'p1': 'person', 'p2': 'person', 'UAV_1': 'uav'}
+        self.mocap_object_id_to_class_map = rospy.get_param('~mocap_object_id_to_class_map', {})
         
         # 更新频率
         self.update_freq = rospy.get_param('~update_freq', 10.0)
         
-        # 时间戳同步容差（秒）- 检测结果和真值的时间戳差异超过此值则不进行匹配
+        # 时间戳同步模式：'tolerance' 或 'latest'
+        self.timestamp_sync_mode = rospy.get_param('~timestamp_sync_mode', 'tolerance')
+        
+        # 时间戳同步容差（秒）- 仅在 tolerance 模式下使用
+        # 检测结果和真值的时间戳差异超过此值则不进行匹配
         # 对于10Hz点云，建议设置为 0.15（150ms，略大于一帧间隔100ms）
         self.timestamp_tolerance = rospy.get_param('~timestamp_tolerance', 0.15)
         
@@ -193,16 +205,13 @@ class MultiAlgorithmEvaluator:
     def setup_mocap_multi_subscribers(self):
         """设置多物体动捕模式的订阅器"""
         rospy.loginfo("Setting up multi-object mocap subscribers...")
-        
-        # 获取所有符合模式的话题
-        import rostopic
-        
+
         # 查找所有 /vrpn_client_node/*/pose 话题
         mocap_topics = []
         try:
-            # 获取所有话题
-            all_topics = rostopic.get_topic_list()
-            
+            # 获取所有已发布话题：返回 list of [topic_name, topic_type]
+            all_topics = rospy.get_published_topics()
+
             for topic_name, topic_type in all_topics:
                 # 检查是否符合动捕话题模式
                 if (topic_name.startswith(self.gt_topic + '/') and 
@@ -227,7 +236,15 @@ class MultiAlgorithmEvaluator:
             topic_parts = topic.split('/')
             if len(topic_parts) >= 3:
                 object_id = topic_parts[2]  # UAV_3
-                object_type = object_id.split('_')[0] if '_' in object_id else object_id.lower()
+
+                # 先生成默认类型，再统一转小写，保证与配置中的 key（如 uav/person/car）一致
+                object_type = object_id.split('_')[0] if '_' in object_id else object_id
+                object_type = object_type.lower()
+
+                # 应用 object_id -> 类别名 的映射（优先级最高）
+                mapped_type = self.mocap_object_id_to_class_map.get(object_id)
+                if isinstance(mapped_type, str) and mapped_type:
+                    object_type = mapped_type.lower()
                 
                 # 存储物体类型映射
                 self.mocap_object_types[object_id] = object_type
@@ -461,6 +478,19 @@ class MultiAlgorithmEvaluator:
         
         return best_gt, min_time_diff
     
+    def get_latest_gt(self):
+        """
+        获取最新的真值数据（用于 latest 模式）
+        
+        Returns:
+            latest_gt: 最新的真值列表，如果缓冲区为空则返回 None
+        """
+        if len(self.gt_buffer) == 0:
+            return None
+        
+        # 返回缓冲区中最新的真值
+        return self.gt_buffer[-1]
+    
     def evaluate_callback(self, event):
         """评估定时回调"""
         if len(self.gt_buffer) == 0:
@@ -482,17 +512,33 @@ class MultiAlgorithmEvaluator:
             if len(detections) == 0:
                 continue
             
-            # 根据检测结果的时间戳找到最接近的真值帧
-            detection_timestamp = detections[0].timestamp
-            matched_gt, time_diff = self.find_nearest_gt(detection_timestamp)
-            
-            if matched_gt is None:
-                # 没有找到时间匹配的真值，跳过本次评估
-                sync_info[algo_name] = "NO_GT"
-                continue
-            
-            # 记录时间同步信息
-            sync_info[algo_name] = f"{time_diff*1000:.1f}ms"
+            # 根据时间戳同步模式选择真值匹配方式
+            if self.timestamp_sync_mode == 'latest':
+                # latest 模式：直接使用最新的真值
+                matched_gt = self.get_latest_gt()
+                
+                if matched_gt is None:
+                    sync_info[algo_name] = "NO_GT"
+                    continue
+                
+                # 记录时间同步信息（显示时间差但不作为过滤条件）
+                detection_timestamp = detections[0].timestamp
+                gt_timestamp = matched_gt[0].timestamp if len(matched_gt) > 0 else 0
+                time_diff = abs(detection_timestamp - gt_timestamp)
+                sync_info[algo_name] = f"LATEST({time_diff*1000:.1f}ms)"
+                
+            else:  # tolerance 模式（默认）
+                # 根据检测结果的时间戳找到最接近的真值帧
+                detection_timestamp = detections[0].timestamp
+                matched_gt, time_diff = self.find_nearest_gt(detection_timestamp)
+                
+                if matched_gt is None:
+                    # 没有找到时间匹配的真值，跳过本次评估
+                    sync_info[algo_name] = "NO_GT"
+                    continue
+                
+                # 记录时间同步信息
+                sync_info[algo_name] = f"{time_diff*1000:.1f}ms"
             
             # 数据关联 - 使用时间对齐后的真值
             matches, unmatched_gt, unmatched_det = self.associator.associate(

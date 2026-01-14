@@ -13,23 +13,37 @@ mocap_mode: true  # 启用动捕模式：使用3D欧氏距离进行关联，不�
 mocap_id_height_map:
   car: 0.5        # 车辆中心高度
   person: 0.9     # 人体中心高度
-  uav: 1.5      # 无人机中心高度
+  uav: 1.0      # 无人机中心高度
 
 # 动捕物体类别列表（用于提供默认类别映射，实际类别从话题名称提取）
 mocap_object_classes: ['car', 'person', 'uav']
 
+# 动捕物体ID到类别名称的映射（用于把具体ID归并到上面的类别名）
+mocap_object_id_to_class_map:
+  UAV_1: uav
+  p1: person
+  p2: person
+
 # 数据关联参数
-distance_threshold: 1.0      # XY平面距离阈值(米)
-iou_threshold: 0.1           # IOU阈值（动捕模式不使用此参数）
+distance_threshold: 2.0       # 3D欧氏距离阈值(米)
                              
 # 更新频率
 update_freq: 10.0            # 评估更新频率(Hz)
+
+# 时间戳同步参数
+timestamp_sync_mode: "latest"  # 时间戳同步模式：
+                                  # "tolerance": 在容差范围内找时间戳最接近的真值帧（推荐用于回放bag）
+                                  # "latest": 直接使用最新的检测结果和最新的真值进行匹配（推荐用于实时运行）
+timestamp_tolerance: 0.25         # 时间戳同步容差（秒），仅在 tolerance 模式下使用
+                                  # 检测结果会在真值缓冲区中找时间戳最接近的帧进行匹配
+                                  # 对于10Hz点云（帧间隔100ms），建议设置为0.15（150ms）
+                                  # 超过此容差的检测结果将被跳过，不参与评估
 
 # 可视化模式
 visualization_mode: "immediate"  # immediate: 接收到数据立即可视化（推荐）
                                  # timer: 在定时器中可视化
 
-# 时间戳模式
+# 时间戳模式，作用于可视化
 timestamp_mode: "original"       # original: 使用消息原始时间戳（推荐）
                                  # now: 使用实时时间戳
 
