@@ -306,8 +306,8 @@ class PlotGenerator:
         plt.title('Multi-Algorithm Performance Summary', 
                  fontsize=16, fontweight='bold', pad=5)
         
+        # 只保存PNG格式（不生成PDF）
         plt.savefig(save_path.replace('.txt', '.png'), dpi=300, bbox_inches='tight')
-        plt.savefig(save_path.replace('.txt', '.pdf'), dpi=300, bbox_inches='tight')
         plt.close()
         
         # 同时保存文本格式

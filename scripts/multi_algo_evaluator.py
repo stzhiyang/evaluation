@@ -767,18 +767,8 @@ class MultiAlgorithmEvaluator:
         
         self.save_overall_metrics_json(overall_metrics)
         
-        # 生成图表
+        # 生成图表 - 只生成性能表格（PNG和TXT格式）
         plot_gen = PlotGenerator(self.output_dir)
-        
-        try:
-            plot_gen.plot_time_series(self.algo_metrics_dict, timestamp=self.timestamp)
-        except Exception as e:
-            rospy.logerr(f"Failed to generate time series plot: {e}")
-        
-        try:
-            plot_gen.plot_radar_chart(overall_metrics, timestamp=self.timestamp)
-        except Exception as e:
-            rospy.logerr(f"Failed to generate radar chart: {e}")
         
         try:
             plot_gen.generate_performance_table(overall_metrics, timestamp=self.timestamp)

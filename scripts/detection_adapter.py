@@ -312,7 +312,10 @@ class DetectionAdapter:
         
         detections = []
         
-        for obj_id, pose_stamped in mocap_poses_dict.items():
+        # 创建字典副本，避免在迭代时被其他回调修改导致 RuntimeError
+        poses_snapshot = dict(mocap_poses_dict)
+        
+        for obj_id, pose_stamped in poses_snapshot.items():
             # 获取物体类型
             obj_type = object_types_dict.get(obj_id, 'unknown')
             
