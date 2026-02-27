@@ -101,13 +101,48 @@ Visualization Manager:
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
-      Enabled: false
+      Enabled: true
       Marker Topic: /evaluation/metrics_text
       Name: Metrics Text
       Namespaces:
-        {}
+        metrics_text: true
       Queue Size: 100
-      Value: false
+      Value: true
+    - Angle Tolerance: 0.10000000149011612
+      Class: rviz/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: true
+      Enabled: true
+      Keep: 100
+      Name: Odometry
+      Position Tolerance: 0.10000000149011612
+      Queue Size: 10
+      Shape:
+        Alpha: 1
+        Axes Length: 1
+        Axes Radius: 0.10000000149011612
+        Color: 255; 25; 0
+        Head Length: 0.30000001192092896
+        Head Radius: 0.10000000149011612
+        Shaft Length: 1
+        Shaft Radius: 0.05000000074505806
+        Value: Arrow
+      Topic: /Odom_high_freq
+      Unreliable: false
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -144,17 +179,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
+        X: -1.9672908782958984
+        Y: 0.2437250167131424
+        Z: -0.6407232880592346
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.33539843559265137
+      Pitch: 1.2853975296020508
       Target Frame: <Fixed Frame>
-      Yaw: 3.1366915702819824
+      Yaw: 3.1316914558410645
     Saved: ~
 Window Geometry:
   Displays:

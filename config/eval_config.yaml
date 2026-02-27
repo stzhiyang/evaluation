@@ -1,8 +1,8 @@
 # 评估器配置文件
 
 # 数据关联参数 - 双重匹配条件
-distance_threshold: 1.0      # 欧氏距离阈值(米) - 所有算法
-iou_threshold: 0.1           # 3D边界框IOU阈值 - 所有算法
+distance_threshold: 0.5      # 欧氏距离阈值(米) - 所有算法
+iou_threshold: 0.3           # 3D边界框IOU阈值 - 所有算法
                              # 匹配条件（必须同时满足）：
                              # 1. 3D边界框IOU >= iou_threshold
                              # 2. 中心欧氏距离 < distance_threshold

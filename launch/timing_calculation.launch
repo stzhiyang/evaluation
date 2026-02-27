@@ -28,10 +28,10 @@ Timing Calculation Launch File
         <!-- 配置四个算法的 CSV 文件路径 -->
         <!-- 请根据实际情况修改这些路径 -->
         <rosparam param="csv_files">
-            LDOT: "/home/st/LDOT_ws/src/LDOT/ldot_detector/timing/test_ldot_timing_20251224_165138_114.csv"
-            M-detector: "/home/st/M_detector/src/M-detector/timing/test_mdetector_timing_20251224_161740_324.csv"
-            LV-DOT: "/home/st/ODOT/src/LV-DOT/onboard_detector/timing/test_lvdot_timing_20251224_161844_621.csv"
-            FAPP: "/home/st/FAPP/src/FAPP/src/mot_mapping/timing/test_fapp_timing_20251224_161808_655.csv"
+            LDOT: "/home/st/LDOT_ws/src/LDOT/ldot_detector/timing/test_ldot_timing_20260126_112830_066.csv"
+            M-detector: "/home/st/M_detector/src/M-detector/timing/test_mdetector_timing_20260126_112351_290.csv"
+            LV-DOT: "/home/st/ODOT/src/LV-DOT/onboard_detector/timing/test_lvdot_timing_20260126_113725_406.csv"
+            FAPP: "/home/st/FAPP/src/FAPP/src/mot_mapping/timing/test_fapp_timing_20260126_114446_205.csv"
         </rosparam>
         
         <!-- 输出目录配置 -->

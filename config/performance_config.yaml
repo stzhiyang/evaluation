@@ -2,11 +2,11 @@
 # 用于测量单个算法启动前后的CPU和内存消耗
 
 # 算法名称（用于显示和文件命名）"M-detector","LVDOT","LDOT","FAPP"
-algorithm_name: "LDOT"
+algorithm_name: "FAPP"
 
 # ROS节点名称（用于检查节点是否运行）
 # dynfilter,detector_node,ldot_detector_node,mapping_node
-node_name: "ldot_detector_node"
+node_name: "mapping_node"
 
 # 监控频率 (Hz)
 # 建议: 1-5 Hz，太高会影响系统性能
